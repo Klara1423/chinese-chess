@@ -1,0 +1,23 @@
+# Gradle / Android
+.gradle/
+build/
+app/build/
+local.properties
+*.iml
+.idea/
+captures/
+.externalNativeBuild/
+.cxx/
+.kotlin/
+
+# 签名（含口令，不要提交）
+keystore/
+
+# 系统垃圾
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# 临时文件
+*.log
+*.hprof
