@@ -193,22 +193,20 @@ class GameView(context: Context) : View(context) {
 
         topBarH = dp(54f)
         bottomBarH = dp(38f)
-        controlH = dp(40f)
 
         val areaTop = topInset + topBarH
         val areaBottom = h - bottomInset - bottomBarH
-        controlTop = areaBottom - controlH
         val availW = w - dp(40f)
         val availH = areaBottom - areaTop
 
-        // 棋盘按宽度铺满；同时给下方棋谱面板和操作栏留位置
+        // 棋盘按宽度铺满；同时给下方棋谱面板留位置
         val maxCellByHeight = (availH - dp(168f)) / 10.24f
         cell = min(availW / 9f, maxCellByHeight).coerceAtLeast(dp(16f))
         boardLeft = (w - cell * 8f) / 2f
         boardTop = areaTop + cell * 0.62f + dp(10f)
 
         logTop = boardTop + cell * 9f + cell * 0.62f + dp(16f)
-        logBottom = controlTop - dp(10f)
+        logBottom = areaBottom - dp(10f)
 
         bgShader = LinearGradient(
             0f, 0f, w * 0.35f, h,
@@ -347,18 +345,6 @@ class GameView(context: Context) : View(context) {
                 }
                 if (undoRect.contains(x, y)) {
                     undo()
-                    return true
-                }
-                if (mode == Mode.AI && hintRect.contains(x, y)) {
-                    startHint()
-                    return true
-                }
-                if (drawRect.contains(x, y)) {
-                    offerDraw()
-                    return true
-                }
-                if (resignRect.contains(x, y)) {
-                    askResign()
                     return true
                 }
 
@@ -855,7 +841,6 @@ class GameView(context: Context) : View(context) {
         drawPieces(canvas)
         drawHint(canvas)
         drawLogPanel(canvas)
-        drawControls(canvas)
         drawBottomBar(canvas)
         if (game.finished && SystemClock.uptimeMillis() - finishedAt > 380) {
             drawResult(canvas)
@@ -875,6 +860,12 @@ class GameView(context: Context) : View(context) {
         restartRect.set(w - dp(12f) - dp(56f), barTop, w - dp(12f), barTop + barH)
         drawPill(canvas, restartRect, "重开", true)
 
+        undoRect.set(
+            restartRect.left - dp(8f) - dp(56f), barTop,
+            restartRect.left - dp(8f), barTop + barH
+        )
+        drawPill(canvas, undoRect, "悔棋", game.canUndo() && !thinking && confirmAction == 0)
+
         val title = when (mode) {
             Mode.AI -> "人机对战 · ${difficulty.label}"
             Mode.PVP -> "双人对弈"
@@ -884,41 +875,9 @@ class GameView(context: Context) : View(context) {
         textPaint.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         textPaint.textSize = dp(14f)
         val fm = textPaint.fontMetrics
-        val titleCx = (backRect.right + restartRect.left) / 2f
+        val titleCx = (backRect.right + undoRect.left) / 2f
         canvas.drawText(title, titleCx, barTop + barH / 2f - (fm.ascent + fm.descent) / 2f, textPaint)
         textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
-    }
-
-    /** 棋盘下方的操作栏：悔棋 / 提示 / 求和 / 认输 */
-    private fun drawControls(canvas: Canvas) {
-        val left = dp(16f)
-        val right = width - dp(16f)
-        val gap = dp(8f)
-        val n = if (mode == Mode.AI) 4 else 3
-        val bw = (right - left - gap * (n - 1)) / n
-        val top = controlTop
-        val bottom = controlTop + controlH
-
-        var x = left
-        undoRect.set(x, top, x + bw, bottom)
-        drawPill(canvas, undoRect, "悔棋", game.canUndo() && !thinking && confirmAction == 0)
-        x += bw + gap
-
-        if (mode == Mode.AI) {
-            hintRect.set(x, top, x + bw, bottom)
-            val hintEnabled = !thinking && !hintBusy && !game.finished && game.sideToMove == Side.RED
-            drawPill(canvas, hintRect, if (hintBusy) "思考…" else "提示", hintEnabled)
-            x += bw + gap
-        } else {
-            hintRect.setEmpty()
-        }
-
-        drawRect.set(x, top, x + bw, bottom)
-        drawPill(canvas, drawRect, "求和", !thinking && !game.finished)
-        x += bw + gap
-
-        resignRect.set(x, top, x + bw, bottom)
-        drawPill(canvas, resignRect, "认输", !game.finished)
     }
 
     /** 提示箭头：绿线 + 箭头 + 起点圈 */
@@ -1545,7 +1504,8 @@ class GameView(context: Context) : View(context) {
             color = if (side == Side.RED) 0xFFB01E24.toInt() else 0xFF23201D.toInt()
             typeface = kai
             textAlign = Paint.Align.CENTER
-            textSize = size * if (kind == Kind.KING) 0.66f else 0.62f
+            // 全体系数缩小，但保留「将帅略大」的比例（1.1 是将帅比其他子大 6%）
+            textSize = size * if (kind == Kind.KING) KING_TEXT_SCALE else PIECE_TEXT_SCALE
             style = Paint.Style.FILL_AND_STROKE
             strokeWidth = size * 0.012f
             strokeJoin = Paint.Join.ROUND
@@ -1563,6 +1523,12 @@ class GameView(context: Context) : View(context) {
     }
 
     private companion object {
+        /** 棋子文字相对位图边长的字号系数（基准，全体统一缩小） */
+        const val PIECE_TEXT_SCALE = 0.56f
+
+        /** 将 / 帅略大一号，保持 1.1 的「将帅比其它子大 6%」 */
+        const val KING_TEXT_SCALE = 0.60f
+
         val C_BG_TOP = 0xFF2E2117.toInt()
         val C_BG_MID = 0xFF20170F.toInt()
         val C_BG_BOTTOM = 0xFF120D08.toInt()
