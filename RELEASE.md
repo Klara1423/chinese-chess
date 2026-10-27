@@ -85,6 +85,27 @@ tag 一定要打：以后 `git checkout v1.2` 就能回到这个版本，`git di
 | 新功能 | 1.2 → 1.3 或 2.0 |
 | 架构级重写 / 联网对战 | 2.0 |
 
+## 推送到远程（可选，随时可做）
+
+本地仓库不依赖 GitHub，没登录、没联网也能正常提交。等能登录了再推，一次都不会少。
+
+**GitHub Desktop**：`File → Add local repository` → 选项目目录 → 右上角 `Publish repository` → 勾选 **Keep this code private**。
+
+**命令行**：
+
+```powershell
+git remote add origin https://github.com/<用户名>/<仓库名>.git
+git push -u origin main
+git push origin --tags
+```
+
+要点：
+
+- `keystore/` 已在 `.gitignore` 中排除，不会上传（里面有明文口令）。**密钥必须单独备份**，丢了就无法给老用户做覆盖升级
+- APK 会随仓库上传（每个约 800 KB）。版本多了（>30 个）再考虑挪到 GitHub Releases，仓库里只留 `INDEX.md`
+- 国内访问 GitHub 慢或被墙时，可以挂代理，或改用 Gitee 码云——命令完全一样，只换 remote 地址
+- 部署前最稳的备份仍然是：**整个项目文件夹（含 `.git` 和 `dist`）复制到移动硬盘或网盘**
+
 ## 不要做的事
 
 - ❌ 覆盖 `dist/` 里已有的同名包
