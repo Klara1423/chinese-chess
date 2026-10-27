@@ -7,6 +7,7 @@ import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RadialGradient
+import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
@@ -115,6 +116,7 @@ class GameView(context: Context) : View(context) {
     }
     private val tmpRect = RectF()
     private val tmpRect2 = RectF()
+    private val inkRect = Rect()
 
     private var bgShader: Shader? = null
     private var panelShader: Shader? = null
@@ -1504,14 +1506,24 @@ class GameView(context: Context) : View(context) {
             color = if (side == Side.RED) 0xFFB01E24.toInt() else 0xFF23201D.toInt()
             typeface = kai
             textAlign = Paint.Align.CENTER
-            // 全体系数缩小，但保留「将帅略大」的比例（1.1 是将帅比其他子大 6%）
-            textSize = size * if (kind == Kind.KING) KING_TEXT_SCALE else PIECE_TEXT_SCALE
+            textSize = size * PIECE_TEXT_SCALE
             style = Paint.Style.FILL_AND_STROKE
             strokeWidth = size * 0.012f
             strokeJoin = Paint.Join.ROUND
         }
-        val fm = tp.fontMetrics
-        cv.drawText(glyphOf(piece), c, c - (fm.ascent + fm.descent) / 2f, tp)
+        // 每个字的墨迹宽高差很多（「馬」窄、「將」宽），统一字号必然有人顶圈、有人偏小。
+        // 所以按实测墨迹把每个字缩放到固定的目标尺寸，再按墨迹中心对齐圆心。
+        val glyph = glyphOf(piece)
+        val targetInk = r * 0.80f * 2f *
+            if (kind == Kind.KING) KING_INK_RATIO else PIECE_INK_RATIO
+
+        tp.getTextBounds(glyph, 0, glyph.length, inkRect)
+        val inkMax = maxOf(inkRect.width(), inkRect.height()).toFloat()
+        if (inkMax > 1f) tp.textSize *= targetInk / inkMax
+
+        // 用最终字号重新量一次，按墨迹中心（而不是字体基线）垂直居中
+        tp.getTextBounds(glyph, 0, glyph.length, inkRect)
+        cv.drawText(glyph, c, c - (inkRect.top + inkRect.bottom) / 2f, tp)
 
         if (kind != Kind.KING && kind != Kind.ADVISOR && kind != Kind.ELEPHANT) {
             // 车马炮兵：轻微内阴影提升立体感
@@ -1523,11 +1535,14 @@ class GameView(context: Context) : View(context) {
     }
 
     private companion object {
-        /** 棋子文字相对位图边长的字号系数（基准，全体统一缩小） */
+        /** 字号的起算基准（会再按墨迹归一化，最终大小由下面两个比例决定） */
         const val PIECE_TEXT_SCALE = 0.56f
 
-        /** 将 / 帅略大一号，保持 1.1 的「将帅比其它子大 6%」 */
-        const val KING_TEXT_SCALE = 0.60f
+        /** 普通棋子墨迹占内圈直径的比例 */
+        const val PIECE_INK_RATIO = 0.68f
+
+        /** 将 / 帅比其它子略大一点 */
+        const val KING_INK_RATIO = 0.72f
 
         val C_BG_TOP = 0xFF2E2117.toInt()
         val C_BG_MID = 0xFF20170F.toInt()
