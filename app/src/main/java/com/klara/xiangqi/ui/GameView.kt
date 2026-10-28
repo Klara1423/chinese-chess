@@ -1514,8 +1514,9 @@ class GameView(context: Context) : View(context) {
         // 每个字的墨迹宽高差很多（「馬」窄、「將」宽），统一字号必然有人顶圈、有人偏小。
         // 所以按实测墨迹把每个字缩放到固定的目标尺寸，再按墨迹中心对齐圆心。
         val glyph = glyphOf(piece)
-        val targetInk = r * 0.80f * 2f *
-            if (kind == Kind.KING) KING_INK_RATIO else PIECE_INK_RATIO
+        val inkRatio = (if (kind == Kind.KING) KING_INK_RATIO else PIECE_INK_RATIO) *
+            (GLYPH_INK_TWEAK[glyph] ?: 1f)
+        val targetInk = r * 0.80f * 2f * inkRatio
 
         tp.getTextBounds(glyph, 0, glyph.length, inkRect)
         val inkMax = maxOf(inkRect.width(), inkRect.height()).toFloat()
@@ -1543,6 +1544,17 @@ class GameView(context: Context) : View(context) {
 
         /** 将 / 帅比其它子略大一点 */
         const val KING_INK_RATIO = 0.72f
+
+        /**
+         * 个别字的光学补偿（在墨迹归一化之后再乘一次）。
+         * 归一化让墨迹最长边一样长，但笔画少的字看着还是偏小，按需单独放大几个百分点。
+         * 调整时改这里，配平后重新看截图。
+         */
+        val GLYPH_INK_TWEAK = mapOf(
+            "仕" to 1.06f,
+            "相" to 1.05f,
+            "車" to 1.04f,
+        )
 
         val C_BG_TOP = 0xFF2E2117.toInt()
         val C_BG_MID = 0xFF20170F.toInt()

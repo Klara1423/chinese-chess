@@ -31,7 +31,7 @@ dist/中国象棋-1.1.apk
 
 ## 字体与图标
 
-- 棋子、标题、结算用 **霞鹜文楷 LXGW WenKai TC**，按实际用到的 38 个字形子集化（约 17 KB，`assets/font/kai.ttf`）。棋子绘制额外加了 1.2% 描边，因为楷体笔画偏细，缩小后容易发虚
+- 棋子、标题、结算用 **霞鹜文楷 LXGW WenKai TC**，按实际用到的 36 个汉字子集化（约 17 KB，`assets/font/kai.ttf`）。棋子绘制额外加了 1.2% 描边，因为楷体笔画偏细，缩小后容易发虚
 - 字体许可为 **SIL Open Font License 1.1**，副本见 `LICENSES/LXGW-WenKai-OFL.txt` 和 `assets/font/OFL.txt`
 - 启动图标是「红帥棋子 + 木质底」，用同一份子集字体渲染，自适应图标放在 `res/mipmap-anydpi-v26/`
 

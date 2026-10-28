@@ -29,7 +29,7 @@ fun kindOf(piece: Int): Int = piece and 7
 
 private val GLYPHS = arrayOf(
     arrayOf("", "帥", "仕", "相", "馬", "車", "炮", "兵"),
-    arrayOf("", "將", "士", "象", "馬", "車", "砲", "卒")
+    arrayOf("", "將", "士", "象", "馬", "車", "炮", "卒")
 )
 
 /** 棋子上的汉字 */
