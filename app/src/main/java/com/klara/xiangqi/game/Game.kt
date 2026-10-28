@@ -98,6 +98,20 @@ class Game {
     /** 已走步数 */
     val plyCount: Int get() = history.size
 
+    /**
+     * 某一方吃掉的全部棋子（按吃掉的先后顺序）。
+     * 被吃子的阵营必然是对手，所以不用额外记「谁吃的」。
+     */
+    fun capturedPieces(side: Int): IntArray {
+        val out = IntArray(16)
+        var n = 0
+        for (rec in history) {
+            if (rec.captured == 0) continue
+            if (Side.other(sideOf(rec.captured)) == side) out[n++] = rec.captured
+        }
+        return out.copyOf(n)
+    }
+
     val moveCount: Int get() = notations.size
 
     fun moveAt(index: Int): String =

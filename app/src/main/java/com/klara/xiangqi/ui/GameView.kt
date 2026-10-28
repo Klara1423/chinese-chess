@@ -5,7 +5,6 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.LinearGradient
 import android.graphics.Paint
-import android.graphics.Path
 import android.graphics.RadialGradient
 import android.graphics.Rect
 import android.graphics.RectF
@@ -30,12 +29,9 @@ import com.klara.xiangqi.game.glyphOf
 import com.klara.xiangqi.game.kindOf
 import com.klara.xiangqi.game.rowOf
 import com.klara.xiangqi.game.sideOf
-import kotlin.math.abs
-import kotlin.math.cos
 import kotlin.math.min
 import kotlin.math.round
 import kotlin.math.sin
-import kotlin.math.sqrt
 
 /**
  * 整个界面用一块 Canvas 绘制：主菜单 + 棋盘 + 对局信息，避免 Fragment/Compose 依赖。
@@ -48,8 +44,6 @@ class GameView(context: Context) : View(context) {
     // ---------- 状态 ----------
     private val game = Game()
     private val ai = Ai()
-    /** 提示用的独立引擎实例，避免和电脑走子线程抢状态 */
-    private val hintAi = Ai()
     private var screen = Screen.MENU
     private var mode = Mode.AI
     private var difficulty = Difficulty.NORMAL
@@ -84,6 +78,8 @@ class GameView(context: Context) : View(context) {
     private var bottomBarH = 0f
     private var logTop = 0f
     private var logBottom = 0f
+    /** 双人模式的棋谱弹层是否展开（人机模式始终显示棋谱，不用这个） */
+    private var logVisible = false
 
     // ---------- 绘制资源 ----------
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -129,27 +125,15 @@ class GameView(context: Context) : View(context) {
     private val backRect = RectF()
     private val undoRect = RectF()
     private val restartRect = RectF()
-    private val hintRect = RectF()
-    private val drawRect = RectF()
-    private val resignRect = RectF()
     private val confirmCancelRect = RectF()
     private val confirmOkRect = RectF()
     private val againRect = RectF()
     private val toMenuRect = RectF()
+    private val logToggleRect = RectF()
+    private val logCardRect = RectF()
 
-    private var controlTop = 0f
-    private var controlH = 0f
-
-    /** 提示箭头 */
-    private var hintFrom = -1
-    private var hintTo = -1
-    private var hintBusy = false
-    private val hintPath = Path()
-
-    /** 0 无 / 1 认输确认 / 2 和棋确认 */
-    private var confirmAction = 0
-    private var toastText: String? = null
-    private var toastUntil = 0L
+    /** 「退出对局？」二次确认是否打开 */
+    private var confirmExit = false
 
     private val prefs = context.getSharedPreferences("xiangqi", Context.MODE_PRIVATE)
 
@@ -165,11 +149,9 @@ class GameView(context: Context) : View(context) {
     init {
         setOnApplyWindowInsetsListener { _, insets ->
             if (Build.VERSION.SDK_INT >= 30) {
-                val i = insets.getInsets(
-                    WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout()
-                )
-                topInset = i.top
-                bottomInset = i.bottom
+                // 状态栏已隐藏：顶部只留刘海高度（用 IgnoringVisibility 保证下拉临时唤出状态栏时布局不跳）
+                topInset = insets.getInsetsIgnoringVisibility(WindowInsets.Type.displayCutout()).top
+                bottomInset = insets.getInsets(WindowInsets.Type.navigationBars()).bottom
             } else {
                 @Suppress("DEPRECATION")
                 topInset = insets.systemWindowInsetTop
@@ -201,14 +183,25 @@ class GameView(context: Context) : View(context) {
         val availW = w - dp(40f)
         val availH = areaBottom - areaTop
 
-        // 棋盘按宽度铺满；同时给下方棋谱面板留位置
-        val maxCellByHeight = (availH - dp(168f)) / 10.24f
-        cell = min(availW / 9f, maxCellByHeight).coerceAtLeast(dp(16f))
-        boardLeft = (w - cell * 8f) / 2f
-        boardTop = areaTop + cell * 0.62f + dp(10f)
+        // 棋盘按宽度铺满；上下各留一条吃子行，下方再给棋谱面板留位置
+        if (mode == Mode.PVP) {
+            // 双人模式：棋谱收起，棋盘（含上下吃子行）在顶栏和状态条之间垂直居中
+            val maxCellByHeight = (availH - dp(12f)) / 12.72f
+            cell = min(availW / 9f, maxCellByHeight).coerceAtLeast(dp(16f))
+            boardLeft = (w - cell * 8f) / 2f
+            boardTop = areaTop + (availH - cell * 10.24f) / 2f + cell * 0.62f
+            logTop = boardTop
+            logBottom = boardTop
+        } else {
+            val maxCellByHeight = (availH - dp(168f)) / 11.1f
+            cell = min(availW / 9f, maxCellByHeight).coerceAtLeast(dp(16f))
+            boardLeft = (w - cell * 8f) / 2f
+            // 上方吃子行（0.62 格）+ 棋盘木边（0.62 格）
+            boardTop = areaTop + cell * 1.24f + dp(4f)
 
-        logTop = boardTop + cell * 9f + cell * 0.62f + dp(16f)
-        logBottom = areaBottom - dp(10f)
+            logTop = boardTop + cell * 9f + cell * 1.24f + dp(6f)
+            logBottom = areaBottom - dp(10f)
+        }
 
         bgShader = LinearGradient(
             0f, 0f, w * 0.35f, h,
@@ -242,7 +235,8 @@ class GameView(context: Context) : View(context) {
                 downX = x
                 downY = y
                 if (screen == Screen.MENU) return true
-                if (confirmAction != 0) return true
+                if (confirmExit) return true
+                if (logVisible) return true
                 if (game.finished) return true
                 if (thinking) return true
                 val sq = squareAt(x, y, 0.62f)
@@ -281,31 +275,26 @@ class GameView(context: Context) : View(context) {
                     handleMenuTap(x, y)
                     return true
                 }
-                if (confirmAction != 0) {
+                if (confirmExit) {
                     if (confirmCancelRect.contains(x, y)) {
-                        confirmAction = 0
+                        confirmExit = false
                         invalidate()
                     } else if (confirmOkRect.contains(x, y)) {
-                        val action = confirmAction
-                        confirmAction = 0
-                        when (action) {
-                            1 -> {
-                                game.resign()
-                                hintFrom = -1
-                                hintTo = -1
-                                finishedAt = SystemClock.uptimeMillis()
-                                haptic(HapticFeedbackConstants.VIRTUAL_KEY)
-                                postDelayed({ invalidate() }, 420L)
-                            }
-                            2 -> {
-                                game.agreeDraw()
-                                hintFrom = -1
-                                hintTo = -1
-                                finishedAt = SystemClock.uptimeMillis()
-                                postDelayed({ invalidate() }, 420L)
-                            }
-                            3 -> goMenu()
-                        }
+                        confirmExit = false
+                        goMenu()
+                    }
+                    return true
+                }
+                if (mode == Mode.PVP && logToggleRect.contains(x, y)) {
+                    logVisible = !logVisible
+                    haptic(HapticFeedbackConstants.KEYBOARD_TAP)
+                    invalidate()
+                    return true
+                }
+                if (logVisible) {
+                    // 弹层打开时，点面板以外的地方收起
+                    if (!logCardRect.contains(x, y)) {
+                        logVisible = false
                         invalidate()
                     }
                     return true
@@ -423,8 +412,12 @@ class GameView(context: Context) : View(context) {
     fun handleBack(): Boolean {
         return when {
             screen == Screen.GAME -> {
-                if (confirmAction != 0) {
-                    confirmAction = 0
+                if (confirmExit) {
+                    confirmExit = false
+                    invalidate()
+                } else if (logVisible) {
+                    // 棋谱弹层开着时，返回键先收起它
+                    logVisible = false
                     invalidate()
                 } else {
                     requestExitGame()
@@ -438,7 +431,7 @@ class GameView(context: Context) : View(context) {
     /** 回菜单；对局进行中先确认，避免误触丢掉棋局 */
     private fun requestExitGame() {
         if (game.plyCount > 0 && !game.finished) {
-            confirmAction = 3
+            confirmExit = true
             invalidate()
         } else {
             goMenu()
@@ -448,10 +441,8 @@ class GameView(context: Context) : View(context) {
     private fun goMenu() {
         generation++
         thinking = false
-        hintBusy = false
-        hintFrom = -1
-        hintTo = -1
-        confirmAction = 0
+        logVisible = false
+        confirmExit = false
         screen = Screen.MENU
         selected = -1
         targets = IntArray(0)
@@ -470,14 +461,14 @@ class GameView(context: Context) : View(context) {
         dragging = false
         pressing = false
         thinking = false
-        hintBusy = false
-        hintFrom = -1
-        hintTo = -1
-        confirmAction = 0
+        logVisible = false
+        confirmExit = false
         animating = false
         animStartAt = 0L
         finishedAt = 0L
         screen = Screen.GAME
+        // 双人 / 人机的棋盘布局不同（居中 vs 给棋谱留位置），换模式要重算几何
+        updateGeometry()
         invalidate()
     }
 
@@ -485,8 +476,6 @@ class GameView(context: Context) : View(context) {
         if (!game.play(from, to)) return
         selected = -1
         targets = IntArray(0)
-        hintFrom = -1
-        hintTo = -1
         startAnimation(from, to)
         haptic(HapticFeedbackConstants.VIRTUAL_KEY)
         if (game.finished) {
@@ -510,9 +499,6 @@ class GameView(context: Context) : View(context) {
         if (thinking) return
         generation++
         thinking = false
-        hintBusy = false
-        hintFrom = -1
-        hintTo = -1
         // 人机模式下退回到自己该走棋的局面
         val steps = if (mode == Mode.AI && game.plyCount >= 2) 2 else 1
         repeat(steps) {
@@ -523,67 +509,6 @@ class GameView(context: Context) : View(context) {
         animating = false
         finishedAt = 0L
         haptic(HapticFeedbackConstants.KEYBOARD_TAP)
-        invalidate()
-    }
-
-    private fun offerDraw() {
-        if (game.finished || thinking) return
-        if (mode == Mode.PVP) {
-            confirmAction = 2
-            invalidate()
-            return
-        }
-        // 人机模式：电脑按形势决定接不接受（开局阶段不接，避免一上来就和棋）
-        val adv = game.material(Side.RED) - game.material(Side.BLACK)
-        if (game.plyCount >= 10 && adv >= -30) {
-            game.agreeDraw()
-            hintFrom = -1
-            hintTo = -1
-            finishedAt = SystemClock.uptimeMillis()
-            haptic(HapticFeedbackConstants.VIRTUAL_KEY)
-            postDelayed({ invalidate() }, 420L)
-        } else {
-            showToast("电脑拒绝了和棋")
-        }
-        invalidate()
-    }
-
-    private fun askResign() {
-        if (game.finished) return
-        confirmAction = 1
-        invalidate()
-    }
-
-    /** 人机模式：让引擎给出当前局面的推荐着法，只标记不落子 */
-    private fun startHint() {
-        if (mode != Mode.AI || thinking || hintBusy || game.finished) return
-        if (game.sideToMove != Side.RED) return
-        hintBusy = true
-        hintFrom = -1
-        hintTo = -1
-        val gen = generation
-        val ply = game.plyCount
-        val snapshot = game.board.copy()
-        invalidate()
-        Thread {
-            val move = hintAi.chooseMove(snapshot, Difficulty.NORMAL)
-            post {
-                if (gen != generation) return@post
-                hintBusy = false
-                if (move != 0 && game.plyCount == ply && !game.finished) {
-                    hintFrom = MoveGen.fromOf(move)
-                    hintTo = MoveGen.toOf(move)
-                    haptic(HapticFeedbackConstants.KEYBOARD_TAP)
-                }
-                invalidate()
-            }
-        }.apply { isDaemon = true }.start()
-    }
-
-    private fun showToast(msg: String) {
-        toastText = msg
-        toastUntil = SystemClock.uptimeMillis() + 2200
-        postDelayed({ invalidate() }, 2300)
         invalidate()
     }
 
@@ -841,19 +766,19 @@ class GameView(context: Context) : View(context) {
         drawTopBar(canvas)
         drawBoard(canvas)
         drawPieces(canvas)
-        drawHint(canvas)
+        drawCapturedRows(canvas)
         drawLogPanel(canvas)
         drawBottomBar(canvas)
         if (game.finished && SystemClock.uptimeMillis() - finishedAt > 380) {
             drawResult(canvas)
-        } else if (confirmAction != 0) {
+        } else if (confirmExit) {
             drawConfirm(canvas)
         }
     }
 
     private fun drawTopBar(canvas: Canvas) {
         val w = width.toFloat()
-        val barTop = topInset + dp(8f)
+        val barTop = topInset + dp(12f)
         val barH = dp(36f)
 
         backRect.set(dp(12f), barTop, dp(12f) + dp(56f), barTop + barH)
@@ -866,7 +791,7 @@ class GameView(context: Context) : View(context) {
             restartRect.left - dp(8f) - dp(56f), barTop,
             restartRect.left - dp(8f), barTop + barH
         )
-        drawPill(canvas, undoRect, "悔棋", game.canUndo() && !thinking && confirmAction == 0)
+        drawPill(canvas, undoRect, "悔棋", game.canUndo() && !thinking && !confirmExit)
 
         val title = when (mode) {
             Mode.AI -> "人机对战 · ${difficulty.label}"
@@ -877,55 +802,19 @@ class GameView(context: Context) : View(context) {
         textPaint.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         textPaint.textSize = dp(14f)
         val fm = textPaint.fontMetrics
-        val titleCx = (backRect.right + undoRect.left) / 2f
+        // 双人模式在「菜单」右边多一个棋谱开关
+        var titleLeft = backRect.right
+        if (mode == Mode.PVP) {
+            logToggleRect.set(
+                backRect.right + dp(8f), barTop,
+                backRect.right + dp(8f) + dp(56f), barTop + barH
+            )
+            drawPill(canvas, logToggleRect, if (logVisible) "收起" else "棋谱", true)
+            titleLeft = logToggleRect.right
+        }
+        val titleCx = (titleLeft + undoRect.left) / 2f
         canvas.drawText(title, titleCx, barTop + barH / 2f - (fm.ascent + fm.descent) / 2f, textPaint)
         textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
-    }
-
-    /** 提示箭头：绿线 + 箭头 + 起点圈 */
-    private fun drawHint(canvas: Canvas) {
-        if (hintFrom < 0 || hintTo < 0) return
-        val fx = cx(colOf(hintFrom))
-        val fy = cy(rowOf(hintFrom))
-        val tx = cx(colOf(hintTo))
-        val ty = cy(rowOf(hintTo))
-
-        paint.style = Paint.Style.FILL
-        paint.alpha = 255
-
-        linePaint.strokeCap = Paint.Cap.ROUND
-        linePaint.color = 0xCC2E9E5B.toInt()
-        linePaint.strokeWidth = dp(2.6f)
-        canvas.drawCircle(fx, fy, cell * 0.48f, linePaint)
-
-        val dx = tx - fx
-        val dy = ty - fy
-        val len = sqrt(dx * dx + dy * dy)
-        if (len < 1f) return
-        val ux = dx / len
-        val uy = dy / len
-
-        val head = cell * 0.30f
-        val sx = fx + ux * cell * 0.54f
-        val sy = fy + uy * cell * 0.54f
-        val ex = tx - ux * cell * 0.54f
-        val ey = ty - uy * cell * 0.54f
-
-        linePaint.color = 0xCC2E9E5B.toInt()
-        linePaint.strokeWidth = cell * 0.115f
-        canvas.drawLine(sx, sy, ex - ux * head * 0.7f, ey - uy * head * 0.7f, linePaint)
-
-        val px = -uy
-        val py = ux
-        hintPath.reset()
-        hintPath.moveTo(ex, ey)
-        hintPath.lineTo(ex - ux * head + px * head * 0.72f, ey - uy * head + py * head * 0.72f)
-        hintPath.lineTo(ex - ux * head - px * head * 0.72f, ey - uy * head - py * head * 0.72f)
-        hintPath.close()
-        paint.color = 0xCC2E9E5B.toInt()
-        canvas.drawPath(hintPath, paint)
-
-        linePaint.strokeCap = Paint.Cap.ROUND
     }
 
     private fun drawPill(canvas: Canvas, r: RectF, label: String, enabled: Boolean) {
@@ -1019,18 +908,26 @@ class GameView(context: Context) : View(context) {
             mark(canvas, 6, c)
         }
 
-        // 楚河汉界
+        // 楚河汉界：四个字保持在原来的一行位置，各自在原地旋转——
+        // 楚 / 河逆时针 90°，漢 / 界顺时针 90°。不整串转，也不改成竖排（那样会挤成一列）。
         textPaint.textAlign = Paint.Align.CENTER
         textPaint.color = 0x998A5F35.toInt()
         textPaint.typeface = kai
-        textPaint.textSize = cell * 0.44f
-        textPaint.letterSpacing = 0.30f
+        textPaint.textSize = cell * 0.40f
+        textPaint.letterSpacing = 0f
         val riverY = cy(4) + cell / 2f
         val fm = textPaint.fontMetrics
-        val baseY = riverY - (fm.ascent + fm.descent) / 2f
-        canvas.drawText("楚河", cx(2), baseY, textPaint)
-        canvas.drawText("漢界", cx(6), baseY, textPaint)
-        textPaint.letterSpacing = 0f
+        val charDx = cell * 0.28f
+        fun riverChar(ch: String, x: Float, y: Float, degrees: Float) {
+            canvas.save()
+            canvas.rotate(degrees, x, y)
+            canvas.drawText(ch, x, y - (fm.ascent + fm.descent) / 2f, textPaint)
+            canvas.restore()
+        }
+        riverChar("楚", cx(2) - charDx, riverY, -90f)
+        riverChar("河", cx(2) + charDx, riverY, -90f)
+        riverChar("漢", cx(6) - charDx, riverY, 90f)
+        riverChar("界", cx(6) + charDx, riverY, 90f)
         textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
     }
 
@@ -1168,23 +1065,115 @@ class GameView(context: Context) : View(context) {
         }
     }
 
+    /**
+     * 吃子行：黑方吃掉的子画在棋盘上方，红方吃掉的子画在棋盘下方。
+     * 双人模式对坐，上方那一行整体转 180°，让黑方看着是正的。
+     */
+    private fun drawCapturedRows(canvas: Canvas) {
+        val above = boardTop - cell * 0.62f - cell * 0.31f
+        val below = boardTop + cell * 9f + cell * 0.62f + cell * 0.31f
+        drawCapturedRow(canvas, game.capturedPieces(Side.BLACK), above, mode == Mode.PVP, "黑方吃子")
+        drawCapturedRow(canvas, game.capturedPieces(Side.RED), below, false, "红方吃子")
+    }
+
+    private fun drawCapturedRow(
+        canvas: Canvas,
+        pieces: IntArray,
+        y: Float,
+        flip: Boolean,
+        label: String
+    ) {
+        if (pieces.isEmpty()) return
+        val w = width.toFloat()
+
+        canvas.save()
+        if (flip) canvas.rotate(180f, w / 2f, y)
+
+        textPaint.textAlign = Paint.Align.LEFT
+        textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+        textPaint.textSize = dp(9.5f)
+        textPaint.color = 0x59B7A489
+        val fm = textPaint.fontMetrics
+        canvas.drawText(label, dp(18f), y - (fm.ascent + fm.descent) / 2f, textPaint)
+
+        // 最多 15 个（将不会被吃），一排放得下
+        val size = cell * 0.52f
+        val gap = cell * 0.56f
+        val regionLeft = dp(18f) + textPaint.measureText(label) + dp(10f)
+        val regionRight = w - dp(18f)
+        var x = (regionLeft + regionRight) / 2f - gap * (pieces.size - 1) / 2f
+
+        paint.alpha = 255
+        for (p in pieces) {
+            val bmp = pieceBitmaps[p] ?: continue
+            val h = size / 2f
+            tmpRect2.set(x - h, y - h, x + h, y + h)
+            canvas.drawBitmap(bmp, null, tmpRect2, paint)
+            x += gap
+        }
+        canvas.restore()
+    }
+
     private fun drawLogPanel(canvas: Canvas) {
-        val panelH = logBottom - logTop
+        if (mode == Mode.PVP) {
+            drawLogOverlay(canvas)
+        } else {
+            drawLogCard(
+                canvas, dp(16f), logTop, width - dp(16f), logBottom,
+                translucent = true, footer = null
+            )
+        }
+    }
+
+    /** 双人模式的棋谱弹层：半透明卡片盖在棋盘上，点空白处收起 */
+    private fun drawLogOverlay(canvas: Canvas) {
+        if (!logVisible) return
+        val w = width.toFloat()
+        val areaTop = topInset + topBarH
+        val areaBottom = height - bottomInset - bottomBarH
+
+        // 遮罩只盖棋盘区域，顶栏和底部状态条保持亮着
+        paint.style = Paint.Style.FILL
+        paint.alpha = 255
+        paint.color = 0x99000000.toInt()
+        canvas.drawRect(0f, areaTop, w, areaBottom, paint)
+
+        val rowH = dp(22f)
+        val cardH = min(
+            dp(34f) + rowH * 12 + dp(26f),
+            areaBottom - areaTop - dp(24f)
+        ).coerceAtLeast(dp(60f))
+        val top = areaTop + ((areaBottom - areaTop) - cardH) / 2f
+        logCardRect.set(dp(16f), top, w - dp(16f), top + cardH)
+        drawLogCard(
+            canvas, logCardRect.left, logCardRect.top, logCardRect.right, logCardRect.bottom,
+            translucent = false, footer = "轻触空白处收起"
+        )
+    }
+
+    private fun drawLogCard(
+        canvas: Canvas,
+        left: Float,
+        top: Float,
+        right: Float,
+        bottom: Float,
+        translucent: Boolean,
+        footer: String?
+    ) {
+        val panelH = bottom - top
         if (panelH < dp(46f)) return
 
-        val left = dp(16f)
-        val right = width - dp(16f)
-        tmpRect.set(left, logTop, right, logBottom)
+        tmpRect.set(left, top, right, bottom)
 
         paint.style = Paint.Style.FILL
         paint.alpha = 255
-        paint.color = 0x12FFFFFF
+        paint.color = if (translucent) 0x12FFFFFF else 0xF21B140D.toInt()
         canvas.drawRoundRect(tmpRect, dp(16f), dp(16f), paint)
-        linePaint.color = 0x22E2BE79
+        linePaint.color = if (translucent) 0x22E2BE79 else 0x55E2BE79
         linePaint.strokeWidth = dp(1f)
         canvas.drawRoundRect(tmpRect, dp(16f), dp(16f), linePaint)
 
-        val headerBaseline = logTop + dp(22f)
+        val headerBaseline = top + dp(22f)
         textPaint.textAlign = Paint.Align.LEFT
         textPaint.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         textPaint.textSize = dp(11f)
@@ -1199,9 +1188,17 @@ class GameView(context: Context) : View(context) {
         textPaint.color = 0x66B7A489
         canvas.drawText("共 ${game.moveCount} 步", right - dp(14f), headerBaseline, textPaint)
 
+        if (footer != null) {
+            textPaint.textAlign = Paint.Align.CENTER
+            textPaint.textSize = dp(10.5f)
+            textPaint.color = 0x55B7A489
+            canvas.drawText(footer, (left + right) / 2f, bottom - dp(9f), textPaint)
+        }
+
         val rowH = dp(22f)
-        val rowsTop = logTop + dp(34f)
-        val rows = ((logBottom - dp(10f) - rowsTop) / rowH).toInt()
+        val rowsTop = top + dp(34f)
+        val rowsBottom = bottom - if (footer != null) dp(24f) else dp(10f)
+        val rows = ((rowsBottom - rowsTop) / rowH).toInt()
         if (rows <= 0) return
 
         val total = game.moveCount
@@ -1209,7 +1206,7 @@ class GameView(context: Context) : View(context) {
             textPaint.textAlign = Paint.Align.CENTER
             textPaint.textSize = dp(12.5f)
             textPaint.color = 0x44B7A489
-            val cyText = (rowsTop + logBottom) / 2f
+            val cyText = (rowsTop + rowsBottom) / 2f
             val fm0 = textPaint.fontMetrics
             canvas.drawText(
                 "走子后在这里记录中文棋谱",
@@ -1252,20 +1249,6 @@ class GameView(context: Context) : View(context) {
         val w = width.toFloat()
         val y = height - bottomInset - bottomBarH / 2f
 
-        // 短暂提示（如「电脑拒绝了和棋」）
-        val now = SystemClock.uptimeMillis()
-        val toast = toastText
-        if (toast != null && now < toastUntil) {
-            textPaint.textAlign = Paint.Align.CENTER
-            textPaint.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            textPaint.textSize = dp(13f)
-            textPaint.color = 0xFFE8A87C.toInt()
-            val tfm = textPaint.fontMetrics
-            canvas.drawText(toast, w / 2f, y - (tfm.ascent + tfm.descent) / 2f, textPaint)
-            textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
-            return
-        }
-
         val turn = game.sideToMove
         val (label, color) = when {
             game.finished -> when (game.winner) {
@@ -1292,7 +1275,7 @@ class GameView(context: Context) : View(context) {
         canvas.drawCircle(dotX, y, dp(3.2f), paint)
     }
 
-    /** 二次确认弹窗：认输 / 求和 / 退出对局 */
+    /** 退出对局的二次确认弹窗 */
     private fun drawConfirm(canvas: Canvas) {
         val w = width.toFloat()
         val h = height.toFloat()
@@ -1313,26 +1296,16 @@ class GameView(context: Context) : View(context) {
         linePaint.strokeWidth = dp(1.2f)
         canvas.drawRoundRect(tmpRect, dp(22f), dp(22f), linePaint)
 
-        val title = when (confirmAction) {
-            1 -> "确定认输？"
-            2 -> "向对手求和？"
-            else -> "退出对局？"
-        }
-        val sub = when (confirmAction) {
-            1 -> "这一局会判定为你输"
-            2 -> "需要对手同意才能和棋"
-            else -> "当前棋局不会保存"
-        }
         titlePaint.textAlign = Paint.Align.CENTER
         titlePaint.textSize = dp(25f)
         titlePaint.color = C_GOLD
-        canvas.drawText(title, w / 2f, top + dp(66f), titlePaint)
+        canvas.drawText("退出对局？", w / 2f, top + dp(66f), titlePaint)
 
         textPaint.textAlign = Paint.Align.CENTER
         textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
         textPaint.textSize = dp(12f)
         textPaint.color = C_TEXT_DIM
-        canvas.drawText(sub, w / 2f, top + dp(94f), textPaint)
+        canvas.drawText("当前棋局不会保存", w / 2f, top + dp(94f), textPaint)
 
         val btnH = dp(42f)
         val btnW = (cardW - dp(48f)) / 2f
@@ -1359,15 +1332,11 @@ class GameView(context: Context) : View(context) {
             confirmCancelRect.centerY() - (fm.ascent + fm.descent) / 2f, textPaint
         )
 
-        paint.color = if (confirmAction == 1) 0xFFC0392B.toInt() else C_GOLD
+        paint.color = C_GOLD
         canvas.drawRoundRect(confirmOkRect, btnH / 2f, btnH / 2f, paint)
-        textPaint.color = if (confirmAction == 1) 0xFFFFFFFF.toInt() else 0xFF2A1E14.toInt()
+        textPaint.color = 0xFF2A1E14.toInt()
         canvas.drawText(
-            when (confirmAction) {
-                1 -> "认输"
-                2 -> "求和"
-                else -> "退出"
-            },
+            "退出",
             confirmOkRect.centerX(),
             confirmOkRect.centerY() - (fm.ascent + fm.descent) / 2f, textPaint
         )

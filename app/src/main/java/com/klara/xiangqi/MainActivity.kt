@@ -5,6 +5,8 @@ import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.view.View
+import android.view.WindowInsets
+import android.view.WindowInsetsController
 import android.view.WindowManager
 import android.window.OnBackInvokedCallback
 import android.window.OnBackInvokedDispatcher
@@ -48,10 +50,37 @@ class MainActivity : Activity() {
 
         gameView = GameView(this)
         setContentView(gameView)
+        hideSystemUi()
 
         if ((applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
             runSelfTest()
         }
+    }
+
+    /**
+     * 全屏：隐藏状态栏（从顶部下滑可临时唤出，不影响布局），导航栏保留。
+     * 切出去再回来时系统会把状态栏放出来，所以拿到焦点时再隐藏一次。
+     */
+    private fun hideSystemUi() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.insetsController?.apply {
+                hide(WindowInsets.Type.statusBars())
+                systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility =
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+                    View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+                    View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
+                    View.SYSTEM_UI_FLAG_FULLSCREEN or
+                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+        }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) hideSystemUi()
     }
 
     /** 开局 perft 参考值：1=44, 2=1920, 3=79666 —— 用于确认走法生成无误 */

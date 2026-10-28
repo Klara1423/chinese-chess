@@ -2,6 +2,9 @@
 
 每次发新版按这个清单走，别跳步。以 `1.1 → 1.2` 为例。
 
+> **先记住**：`CHANGELOG.md` 是**每次改动**都要更新的，不是发版时才补。
+> 改了什么就当场写进当前版本那一节；本清单第六步只是最后再核对一遍。
+
 ## 一、改版本号
 
 `app/build.gradle.kts`：
@@ -63,7 +66,8 @@ $aapt = Get-ChildItem "$env:LOCALAPPDATA\Android\Sdk\build-tools" -Recurse -Filt
 
 ## 六、更新文档
 
-1. `CHANGELOG.md` 顶部加一节：新增 / 改动 / 修复 / 体积
+1. `CHANGELOG.md` 顶部加一节 `## [X.Y] - 日期`，下面按「新增 / 变更 / 修复 / 移除」分点写（不用表格）；
+   顶部版本清单也补一条（版本 / versionCode / 日期 / 包大小 / 概要）
 2. `dist/INDEX.md` 表格加一行，填 versionCode、大小、SHA256、来源、备注
 3. `dist/历史版本/README.md` 的「目前状态」表更新
 
