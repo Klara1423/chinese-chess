@@ -53,7 +53,10 @@ app/src/main/java/com/klara/xiangqi/
 │   ├── Ai.kt                Alpha-Beta 引擎
 │   ├── MoveNamer.kt         中文记谱
 │   └── Perft.kt             调试自检
-└── ui/GameView.kt           全部界面绘制与触控
+└── ui/
+    ├── GameView.kt          界面主类：状态、几何、触控、谁在什么时候画什么
+    ├── Theme.kt             配色与字体（改主题只动这里）
+    └── PieceArt.kt          棋子位图生成（按墨迹归一化）
 ```
 
 `game` 包不依赖 Android，可以直接搬到桌面 JVM 上跑测试。

@@ -6,7 +6,6 @@ import android.graphics.Canvas
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.RadialGradient
-import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
@@ -88,7 +87,7 @@ class GameView(context: Context) : View(context) {
         strokeCap = Paint.Cap.ROUND
     }
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+        typeface = SANS
     }
     /** 霞鹜文楷（OFL）：棋子、标题用的楷体 */
     private val kai: Typeface by lazy {
@@ -112,7 +111,6 @@ class GameView(context: Context) : View(context) {
     }
     private val tmpRect = RectF()
     private val tmpRect2 = RectF()
-    private val inkRect = Rect()
 
     private var bgShader: Shader? = null
     private var panelShader: Shader? = null
@@ -617,7 +615,7 @@ class GameView(context: Context) : View(context) {
         textPaint.textSize = emblemR * 1.20f
         val fm = textPaint.fontMetrics
         canvas.drawText("帥", centerX, y - (fm.ascent + fm.descent) / 2f, textPaint)
-        textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+        textPaint.typeface = SANS
 
         // 标题
         y += emblemR + dp(56f)
@@ -643,11 +641,11 @@ class GameView(context: Context) : View(context) {
         y += dp(62f)
 
         menuAiRect.set(left, y, left + btnW, y + btnH)
-        drawPrimaryButton(canvas, menuAiRect, "人机对战", "与电脑对弈")
+        drawMenuButton(canvas, menuAiRect, "人机对战", "与电脑对弈", filled = true)
         y += btnH + dp(14f)
 
         menuPvpRect.set(left, y, left + btnW, y + btnH)
-        drawSecondaryButton(canvas, menuPvpRect, "双人对弈", "同屏轮流走子")
+        drawMenuButton(canvas, menuPvpRect, "双人对弈", "同屏轮流走子", filled = false)
         y += btnH + dp(34f)
 
         // 难度：分段控件
@@ -713,49 +711,44 @@ class GameView(context: Context) : View(context) {
         }
     }
 
-    private fun drawPrimaryButton(canvas: Canvas, r: RectF, title: String, sub: String) {
+    /**
+     * 菜单的两个入口：主按钮（金色实心）和次按钮（描边）。
+     * 两者除底色、描边、文字颜色之外完全一样，合成一处，改一次两边都生效。
+     */
+    private fun drawMenuButton(
+        canvas: Canvas,
+        r: RectF,
+        title: String,
+        sub: String,
+        filled: Boolean
+    ) {
         paint.style = Paint.Style.FILL
-        paint.color = 0x33E2BE79
         tmpRect.set(r)
-        canvas.drawRoundRect(tmpRect, dp(18f), dp(18f), paint)
-        paint.color = C_GOLD
-        tmpRect.inset(dp(1.5f), dp(1.5f))
-        canvas.drawRoundRect(tmpRect, dp(17f), dp(17f), paint)
+        if (filled) {
+            paint.color = 0x33E2BE79
+            canvas.drawRoundRect(tmpRect, dp(18f), dp(18f), paint)
+            paint.color = C_GOLD
+            tmpRect.inset(dp(1.5f), dp(1.5f))
+            canvas.drawRoundRect(tmpRect, dp(17f), dp(17f), paint)
+        } else {
+            paint.color = 0x10FFFFFF
+            canvas.drawRoundRect(tmpRect, dp(18f), dp(18f), paint)
+            linePaint.color = 0x55E2BE79
+            linePaint.strokeWidth = dp(1.2f)
+            canvas.drawRoundRect(tmpRect, dp(18f), dp(18f), linePaint)
+        }
 
         textPaint.textAlign = Paint.Align.CENTER
-        textPaint.color = 0xFF2A1E14.toInt()
-        textPaint.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        textPaint.typeface = SANS_MEDIUM
         textPaint.textSize = dp(18f)
+        textPaint.color = if (filled) 0xFF2A1E14.toInt() else C_GOLD
         val fm = textPaint.fontMetrics
-        val cyc = r.centerY() - dp(7f)
-        canvas.drawText(title, r.centerX(), cyc - (fm.ascent + fm.descent) / 2f, textPaint)
+        val titleCy = r.centerY() - dp(7f)
+        canvas.drawText(title, r.centerX(), titleCy - (fm.ascent + fm.descent) / 2f, textPaint)
 
-        textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+        textPaint.typeface = SANS
         textPaint.textSize = dp(10.5f)
-        textPaint.color = 0xAA3A2A16.toInt()
-        canvas.drawText(sub, r.centerX(), r.centerY() + dp(15f), textPaint)
-    }
-
-    private fun drawSecondaryButton(canvas: Canvas, r: RectF, title: String, sub: String) {
-        paint.style = Paint.Style.FILL
-        paint.color = 0x10FFFFFF
-        tmpRect.set(r)
-        canvas.drawRoundRect(tmpRect, dp(18f), dp(18f), paint)
-        linePaint.color = 0x55E2BE79
-        linePaint.strokeWidth = dp(1.2f)
-        canvas.drawRoundRect(tmpRect, dp(18f), dp(18f), linePaint)
-
-        textPaint.textAlign = Paint.Align.CENTER
-        textPaint.color = C_GOLD
-        textPaint.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-        textPaint.textSize = dp(18f)
-        val fm = textPaint.fontMetrics
-        val cyc = r.centerY() - dp(7f)
-        canvas.drawText(title, r.centerX(), cyc - (fm.ascent + fm.descent) / 2f, textPaint)
-
-        textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
-        textPaint.textSize = dp(10.5f)
-        textPaint.color = 0x88B7A489.toInt()
+        textPaint.color = if (filled) 0xAA3A2A16.toInt() else 0x88B7A489.toInt()
         canvas.drawText(sub, r.centerX(), r.centerY() + dp(15f), textPaint)
     }
 
@@ -800,7 +793,7 @@ class GameView(context: Context) : View(context) {
         }
         textPaint.textAlign = Paint.Align.CENTER
         textPaint.color = C_GOLD
-        textPaint.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        textPaint.typeface = SANS_MEDIUM
         textPaint.textSize = dp(14f)
         val fm = textPaint.fontMetrics
         // 双人模式在「菜单」右边多一个棋谱开关
@@ -815,7 +808,7 @@ class GameView(context: Context) : View(context) {
         }
         val titleCx = (titleLeft + undoRect.left) / 2f
         canvas.drawText(title, titleCx, barTop + barH / 2f - (fm.ascent + fm.descent) / 2f, textPaint)
-        textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+        textPaint.typeface = SANS
     }
 
     private fun drawPill(canvas: Canvas, r: RectF, label: String, enabled: Boolean) {
@@ -929,7 +922,7 @@ class GameView(context: Context) : View(context) {
         riverChar("河", cx(2) + charDx, riverY, -90f)
         riverChar("漢", cx(6) - charDx, riverY, 90f)
         riverChar("界", cx(6) + charDx, riverY, 90f)
-        textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+        textPaint.typeface = SANS
     }
 
     private fun mark(canvas: Canvas, r: Int, c: Int) {
@@ -1091,7 +1084,7 @@ class GameView(context: Context) : View(context) {
         if (flip) canvas.rotate(180f, w / 2f, y)
 
         textPaint.textAlign = Paint.Align.LEFT
-        textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+        textPaint.typeface = SANS
         textPaint.textSize = dp(9.5f)
         textPaint.color = 0x59B7A489
         val fm = textPaint.fontMetrics
@@ -1176,13 +1169,13 @@ class GameView(context: Context) : View(context) {
 
         val headerBaseline = top + dp(22f)
         textPaint.textAlign = Paint.Align.LEFT
-        textPaint.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        textPaint.typeface = SANS_MEDIUM
         textPaint.textSize = dp(11f)
         textPaint.color = 0x99B7A489.toInt()
         textPaint.letterSpacing = 0.16f
         canvas.drawText("棋谱", left + dp(14f), headerBaseline, textPaint)
         textPaint.letterSpacing = 0f
-        textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+        textPaint.typeface = SANS
 
         textPaint.textAlign = Paint.Align.RIGHT
         textPaint.textSize = dp(11f)
@@ -1303,7 +1296,7 @@ class GameView(context: Context) : View(context) {
         canvas.drawText("退出对局？", w / 2f, top + dp(66f), titlePaint)
 
         textPaint.textAlign = Paint.Align.CENTER
-        textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+        textPaint.typeface = SANS
         textPaint.textSize = dp(12f)
         textPaint.color = C_TEXT_DIM
         canvas.drawText("当前棋局不会保存", w / 2f, top + dp(94f), textPaint)
@@ -1324,7 +1317,7 @@ class GameView(context: Context) : View(context) {
         canvas.drawRoundRect(confirmCancelRect, btnH / 2f, btnH / 2f, linePaint)
 
         textPaint.textAlign = Paint.Align.CENTER
-        textPaint.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        textPaint.typeface = SANS_MEDIUM
         textPaint.textSize = dp(14f)
         textPaint.color = C_GOLD
         var fm = textPaint.fontMetrics
@@ -1341,7 +1334,7 @@ class GameView(context: Context) : View(context) {
             confirmOkRect.centerX(),
             confirmOkRect.centerY() - (fm.ascent + fm.descent) / 2f, textPaint
         )
-        textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+        textPaint.typeface = SANS
     }
 
     private fun drawResult(canvas: Canvas) {
@@ -1400,7 +1393,7 @@ class GameView(context: Context) : View(context) {
         paint.color = C_GOLD
         canvas.drawRoundRect(againRect, btnH / 2f, btnH / 2f, paint)
         textPaint.color = 0xFF2A1E14.toInt()
-        textPaint.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        textPaint.typeface = SANS_MEDIUM
         textPaint.textSize = dp(14f)
         val fm1 = textPaint.fontMetrics
         canvas.drawText(
@@ -1418,7 +1411,7 @@ class GameView(context: Context) : View(context) {
             "返回菜单", toMenuRect.centerX(),
             toMenuRect.centerY() - (fm1.ascent + fm1.descent) / 2f, textPaint
         )
-        textPaint.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+        textPaint.typeface = SANS
     }
 
     // ============================================================
@@ -1431,109 +1424,8 @@ class GameView(context: Context) : View(context) {
             val side = sideOf(piece)
             val kind = kindOf(piece)
             if (glyphOf(piece).isEmpty()) continue
-            pieceBitmaps[piece] = renderPiece(piece, side, kind)
+            pieceBitmaps[piece] = PieceArt.render(kai, piece, side, kind)
         }
         pieceBmpReady = true
     }
-
-    private fun renderPiece(piece: Int, side: Int, kind: Int): Bitmap {
-        val size = 224
-        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-        val cv = Canvas(bmp)
-        val c = size / 2f
-        val r = size * 0.46f
-
-        val sp = Paint(Paint.ANTI_ALIAS_FLAG)
-        sp.color = 0x45000000
-        cv.drawCircle(c, c + size * 0.030f, r, sp)
-        sp.color = 0x22000000
-        cv.drawCircle(c, c + size * 0.050f, r * 0.98f, sp)
-
-        val body = Paint(Paint.ANTI_ALIAS_FLAG)
-        body.shader = RadialGradient(
-            c - r * 0.35f, c - r * 0.42f, r * 1.5f,
-            intArrayOf(0xFFFFFDF5.toInt(), 0xFFF7E6C4.toInt(), 0xFFDFC08A.toInt()),
-            floatArrayOf(0f, 0.52f, 1f),
-            Shader.TileMode.CLAMP
-        )
-        cv.drawCircle(c, c, r, body)
-
-        val rim = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE
-            strokeWidth = size * 0.028f
-            color = 0xFFA87944.toInt()
-        }
-        cv.drawCircle(c, c, r - size * 0.014f, rim)
-
-        val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE
-            strokeWidth = size * 0.013f
-            color = if (side == Side.RED) 0xCCB01E24.toInt() else 0xCC23201D.toInt()
-        }
-        cv.drawCircle(c, c, r * 0.80f, ring)
-
-        val tp = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = if (side == Side.RED) 0xFFB01E24.toInt() else 0xFF23201D.toInt()
-            typeface = kai
-            textAlign = Paint.Align.CENTER
-            textSize = size * PIECE_TEXT_SCALE
-            style = Paint.Style.FILL_AND_STROKE
-            strokeWidth = size * 0.012f
-            strokeJoin = Paint.Join.ROUND
-        }
-        // 每个字的墨迹宽高差很多（「馬」窄、「將」宽），统一字号必然有人顶圈、有人偏小。
-        // 所以按实测墨迹把每个字缩放到固定的目标尺寸，再按墨迹中心对齐圆心。
-        val glyph = glyphOf(piece)
-        val inkRatio = (if (kind == Kind.KING) KING_INK_RATIO else PIECE_INK_RATIO) *
-            (GLYPH_INK_TWEAK[glyph] ?: 1f)
-        val targetInk = r * 0.80f * 2f * inkRatio
-
-        tp.getTextBounds(glyph, 0, glyph.length, inkRect)
-        val inkMax = maxOf(inkRect.width(), inkRect.height()).toFloat()
-        if (inkMax > 1f) tp.textSize *= targetInk / inkMax
-
-        // 用最终字号重新量一次，按墨迹中心（而不是字体基线）垂直居中
-        tp.getTextBounds(glyph, 0, glyph.length, inkRect)
-        cv.drawText(glyph, c, c - (inkRect.top + inkRect.bottom) / 2f, tp)
-
-        if (kind != Kind.KING && kind != Kind.ADVISOR && kind != Kind.ELEPHANT) {
-            // 车马炮兵：轻微内阴影提升立体感
-            val sh = Paint(Paint.ANTI_ALIAS_FLAG)
-            sh.color = 0x10FFFFFF
-            cv.drawCircle(c, c - r * 0.28f, r * 0.55f, sh)
-        }
-        return bmp
-    }
-
-    private companion object {
-        /** 字号的起算基准（会再按墨迹归一化，最终大小由下面两个比例决定） */
-        const val PIECE_TEXT_SCALE = 0.56f
-
-        /** 普通棋子墨迹占内圈直径的比例 */
-        const val PIECE_INK_RATIO = 0.68f
-
-        /** 将 / 帅比其它子略大一点 */
-        const val KING_INK_RATIO = 0.72f
-
-        /**
-         * 个别字的光学补偿（在墨迹归一化之后再乘一次）。
-         * 归一化让墨迹最长边一样长，但笔画少的字看着还是偏小，按需单独放大几个百分点。
-         * 调整时改这里，配平后重新看截图。
-         */
-        val GLYPH_INK_TWEAK = mapOf(
-            "仕" to 1.06f,
-            "相" to 1.05f,
-            "車" to 1.04f,
-        )
-
-        val C_BG_TOP = 0xFF2E2117.toInt()
-        val C_BG_MID = 0xFF20170F.toInt()
-        val C_BG_BOTTOM = 0xFF120D08.toInt()
-        val C_WOOD_A = 0xFFF8E8C8.toInt()
-        val C_WOOD_B = 0xFFE9CE9C.toInt()
-        val C_GOLD = 0xFFE2BE79.toInt()
-        val C_RED = 0xFFC0392B.toInt()
-        val C_TEXT_DIM = 0xFFB7A489.toInt()
-    }
-
 }

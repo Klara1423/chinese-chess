@@ -132,7 +132,12 @@ class Game {
         return true
     }
 
-    /** 当前行棋方认输 */
+    /**
+     * 当前行棋方认输。
+     *
+     * 1.2 起界面上的「认输」入口已删除（双人同屏对坐，只有下方那侧够得着按钮，做不到对等），
+     * 这里保留判定逻辑，等 `TODO.md` 里的「双人对等」方案定了再接回界面。
+     */
     fun resign() {
         if (finished) return
         winner = Side.other(board.sideToMove)
@@ -140,7 +145,7 @@ class Game {
         endReason = 4
     }
 
-    /** 双方同意和棋 */
+    /** 双方同意和棋（同 [resign]：界面入口已删，逻辑留着等「双人对等」方案） */
     fun agreeDraw() {
         if (finished) return
         winner = 2
