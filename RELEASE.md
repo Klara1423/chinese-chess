@@ -1,6 +1,6 @@
 # 发版流程
 
-每次发新版按这个清单走，别跳步。以 `1.1 → 1.2` 为例。
+每次发新版按这个清单走，别跳步。以 `1.2 → 1.3` 为例。
 
 > **先记住**：`CHANGELOG.md` 是**每次改动**都要更新的，不是发版时才补。
 > 改了什么就当场写进当前版本那一节；本清单第六步只是最后再核对一遍。
@@ -10,8 +10,8 @@
 `app/build.gradle.kts`：
 
 ```kotlin
-versionCode = 3        // 必须 +1，Android 靠它判断升级
-versionName = "1.2"
+versionCode = 4        // 必须 +1，Android 靠它判断升级
+versionName = "1.3"
 ```
 
 > `versionCode` 只增不减。改小了系统会拒绝安装，也没法覆盖升级。
@@ -22,25 +22,34 @@ versionName = "1.2"
 build.bat --quiet assembleDebug
 ```
 
-装到模拟器上过一遍：菜单 / 人机一局 / 双人一局 / 提示 / 求和 / 认输 / 结算卡片 / **返回键三种场景**。
+装到模拟器上过一遍：菜单 / 人机一局 / 双人一局 / 棋谱弹层（开关两次） / 吃子行 / 结算卡片 / **返回键三种场景**
+（棋盘上退出、菜单里退出、结算卡片上退出）。
+
+顺手把每屏截一张存进 `screenshots/`，这就是这一版的样子。
 
 > 注意：debug 包和 release 包签名不同，来回切换要先 `adb uninstall com.klara.xiangqi`。
+> 想看正式效果（尤其是签名、包体、图标）就装 `dist/` 里的 release 包。
+>
+> **纯重构 / 只调显示时**：先留着改前的截图，改完按**完全相同的 tap 序列**重走一遍，
+> 用 `Get-FileHash` 比 SHA256。全一致才算「零视觉变化」，不一致就说明哪里动了。
 
 ## 三、归档旧版（**打包前做，别忘**）
 
 ```powershell
-Move-Item "dist\中国象棋-1.1.apk" "dist\历史版本\中国象棋-1.1.apk"
+Move-Item "dist\中国象棋-1.2.apk" "dist\历史版本\中国象棋-1.2.apk"
 ```
 
 顺手把当前截图也留一份（`screenshots/` 会被新版本覆盖）：
 
 ```powershell
-Copy-Item "screenshots\*.png" "screenshots\历史\" -Force
-Rename-Item "screenshots\历史\menu.png"  "v1.1-menu.png"
-Rename-Item "screenshots\历史\board.png" "v1.1-board.png"
-Rename-Item "screenshots\历史\pvp.png"   "v1.1-pvp.png"
-Rename-Item "screenshots\历史\result.png" "v1.1-result.png"
+$v = "1.2"   # 要归档的那一版
+Get-ChildItem "screenshots\*.png" | ForEach-Object {
+    Copy-Item $_.FullName "screenshots\历史\v$v-$($_.Name)" -Force
+}
 ```
+
+> 截图张数随版本变（1.3 是 5 张：`menu` / `board` / `pvp` / `pvp-log` / `captured`），
+> 所以用循环按当前文件名带前缀复制，别一条条手写 `Rename-Item`（漏一张就少一张存档）。
 
 ## 四、打 release 包
 
@@ -56,10 +65,10 @@ build.bat --quiet assembleRelease
 ## 五、复制并校验
 
 ```powershell
-Copy-Item "app\build\outputs\apk\release\app-release.apk" "dist\中国象棋-1.2.apk"
-(Get-FileHash "dist\中国象棋-1.2.apk" -Algorithm SHA256).Hash.ToLower()
+Copy-Item "app\build\outputs\apk\release\app-release.apk" "dist\中国象棋-1.3.apk"
+(Get-FileHash "dist\中国象棋-1.3.apk" -Algorithm SHA256).Hash.ToLower()
 $aapt = Get-ChildItem "$env:LOCALAPPDATA\Android\Sdk\build-tools" -Recurse -Filter aapt2.exe | Select-Object -Last 1
-& $aapt.FullName dump badging "dist\中国象棋-1.2.apk" | Select-String "package:"
+& $aapt.FullName dump badging "dist\中国象棋-1.3.apk" | Select-String "package:"
 ```
 
 确认 `versionCode` / `versionName` 是新的。
@@ -75,20 +84,20 @@ $aapt = Get-ChildItem "$env:LOCALAPPDATA\Android\Sdk\build-tools" -Recurse -Filt
 
 ```powershell
 git add -A
-git commit -m "release: v1.2"
-git tag -a v1.2 -m "v1.2 — 一句话概括本次改动"
+git commit -m "release: v1.3"
+git tag -a v1.3 -m "v1.3 — 一句话概括本次改动"
 ```
 
-tag 一定要打：以后 `git checkout v1.2` 就能回到这个版本，`git diff v1.1 v1.2` 能看全量差异。
+tag 一定要打：以后 `git checkout v1.3` 就能回到这个版本，`git diff v1.2 v1.3` 能看全量差异。
 
 ## 版本号约定
 
 | 变更类型 | 例子 |
 |---|---|
 | 版本定稿**前**只调显示（字号、间距、配色），不改功能 | **不升版本号**，覆盖同版本的包（见下） |
-| 定稿之后再改（哪怕只调显示） | 1.1 → 1.2 |
-| bug 修复 / 小打磨 | 1.1 → 1.2 |
-| 新功能 | 1.2 → 1.3 或 2.0 |
+| 定稿之后再改（哪怕只调显示） | 1.2 → 1.3 |
+| bug 修复 / 小打磨 | 1.3 → 1.4 |
+| 新功能 | 1.3 → 1.4 或 2.0 |
 | 架构级重写 / 联网对战 | 2.0 |
 
 ## 推送到远程（可选，随时可做）
@@ -108,7 +117,7 @@ git push origin --tags
 要点：
 
 - `keystore/` 已在 `.gitignore` 中排除，不会上传（里面有明文口令）。**密钥必须单独备份**，丢了就无法给老用户做覆盖升级
-- APK 会随仓库上传（每个约 800 KB）。版本多了（>30 个）再考虑挪到 GitHub Releases，仓库里只留 `INDEX.md`
+- APK 会随仓库上传（每个约 0.9 MB）。版本多了（>30 个）再考虑挪到 GitHub Releases，仓库里只留 `INDEX.md`
 - 国内访问 GitHub 慢或被墙时，可以挂代理，或改用 Gitee 码云——命令完全一样，只换 remote 地址
 - 部署前最稳的备份仍然是：**整个项目文件夹（含 `.git` 和 `dist`）复制到移动硬盘或网盘**
 
@@ -116,7 +125,7 @@ git push origin --tags
 
 一个版本在**定稿前**反复调显示、不升版本号，直接覆盖 `dist/` 里同名的包。规则：
 
-1. **「定稿」的界线**：用户说满意了 → 这个版本就定稿，打 tag 收尾；之后**再改**才升版本号（1.1 → 1.2）
+1. **「定稿」的界线**：用户说满意了 → 这个版本就定稿，打 tag 收尾；之后**再改**才升版本号（1.2 → 1.3）
 2. 覆盖前确认旧包已提交进 git（`git log -- dist/中国象棋-X.Y.apk`），覆盖后旧包只存在于历史里
 3. `dist/INDEX.md` 只保留**一行**当前包，写最新大小与 SHA256；被覆盖的中间态不必逐行登记，
    在表下用一句话说明「定稿前迭代过几版，可从 git 历史取回」

@@ -26,7 +26,7 @@
 | 文件 | 写什么 |
 |---|---|
 | `CHANGELOG.md` | 每个版本改了什么（**每次改动都要动它**） |
-| `TODO.md` | 当前版本范围、待解决项、实测数据与调参入口 |
+| `TODO.md` | 还没做的、待解决项、实测数据与调参入口（做完的挪进 `CHANGELOG.md`，别留着当历史） |
 | `README.md` | 给使用者看的：功能、安装、结构、字体/图标来源 |
 | `RELEASE.md` | 发版流程清单、版本号约定、归档规则 |
 | `dist/INDEX.md` | 每个发布包的大小 / SHA256 / 来源 / 位置 |
@@ -35,7 +35,8 @@
 ## 版本与构建
 
 - 版本号只写在 `app/build.gradle.kts`；`versionCode` 只增不减
-- 1.1 已定稿（tag `v1.1`），1.2 是当前版本（`versionCode 3`）
+- 1.1 / 1.2 / 1.3 已定稿（tag `v1.1` / `v1.2` / `v1.3`），1.3 是当前版本（`versionCode 4`）
+  - 1.3 的 `dist/中国象棋-1.3.apk` 被同版本覆盖过一次（内部整理重建），发布那版要从 `git show v1.3:dist/中国象棋-1.3.apk` 取
 - 构建统一走 `build.bat`（内部设置 `JAVA_HOME`）：
   `cmd /c "build.bat --quiet assembleRelease"`
 - 偶尔报 Kotlin 路径编码错误，重跑一次即可
@@ -46,12 +47,17 @@
 - 中文提交信息写进 UTF-8 文件再 `git commit -F <文件>`，避免命令行编码问题
 - 发版：`dist/` 只留当前包，旧包移进 `dist/历史版本/`，同步更新 `INDEX.md` 与 `历史版本/README.md`
 - 定稿打 tag（`git tag -a vX.Y`）；定稿前的覆盖式修改可以 amend + 移动 tag
-- 每次改完界面都重拍 `screenshots/`，旧图放 `screenshots/历史/`
+- 每次改完界面都重拍 `screenshots/`，旧图放 `screenshots/历史/`（文件名带版本前缀）
+- **纯重构 / 只调显示**：改前存好截图，改完按**完全相同的 tap 序列**重走一遍，`Get-FileHash` 比 SHA256；
+  全一致才算「零视觉变化」。tap 序列不准，棋盘状态就不同，图自然不同
 
 ## 验证
 
 - 模拟器 `xiangqi_test`（1080×2340 @440dpi，无头）冷启动约 2~3 分钟
 - **签名坑**：debug 包和 release 包签名不同，覆盖安装会 `INSTALL_FAILED_UPDATE_INCOMPATIBLE` 且静默失败；
   验证正式效果一律装 `dist/` 里的包（`install -r`），或先 `uninstall`
-- 用户真机（`73410da1`）连着 USB 时**只读不装**
+- 用户自己的手机（`adb devices` 里除 `emulator-*` 之外的设备）连着 USB 时**只读不装**，
+  也不要去查它装的是哪个版本：她有**两台**，一台装旧版、一台装新版做交叉验证，
+  版本不匹配是她的测试安排，不是需要修的问题
+- 所有 adb 命令显式写 `-s <设备>`；模拟器是 `emulator-5554`，别用默认设备（容易误落到真机上）
 - 测完立刻 `adb emu kill`，并清掉残留 `qemu` / `emulator` 进程
