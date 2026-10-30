@@ -149,8 +149,9 @@ class GameView(context: Context) : View(context) {
     init {
         setOnApplyWindowInsetsListener { _, insets ->
             if (Build.VERSION.SDK_INT >= 30) {
-                // 状态栏已隐藏：顶部只留刘海高度（用 IgnoringVisibility 保证下拉临时唤出状态栏时布局不跳）
-                topInset = insets.getInsetsIgnoringVisibility(WindowInsets.Type.displayCutout()).top
+                // 状态栏已隐藏：顶栏直接贴屏幕顶，不再为挖孔 / 刘海保留安全区。
+                // 用户明确选择“全部上移”，宁可让摄像头孔压住左上角按钮，也不要顶部一条空白。
+                topInset = 0
                 bottomInset = insets.getInsets(WindowInsets.Type.navigationBars()).bottom
             } else {
                 @Suppress("DEPRECATION")

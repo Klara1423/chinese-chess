@@ -1,6 +1,16 @@
 # 待办
 
-## 当前版本：1.2（versionCode 3）
+## 当前版本：1.3（versionCode 4）
+
+1.3 只做一件事：**全屏后顶部不再为挖孔 / 刘海留白**
+
+- 状态栏隐藏后 `topInset` 直接取 0，顶栏贴到屏幕顶（按钮区 33～132 px）
+- 1.2 取的是 `getInsetsIgnoringVisibility(displayCutout).top`（整条安全区，有挖孔的手机上约 136 px），
+  顶栏、棋盘、主菜单被整体推下去，顶部多出一条空带；模拟器没挖孔，所以只在她真机上看得见
+- 已知代价：摄像头孔可能压住顶栏（她的是居中挖孔，压的可能是标题而不是「菜单」按钮），以实机截图为准
+- 以后要按挖孔的横向范围单独避让，是在这处 inset 监听里加判断，不用动别的地方
+
+## 1.2 已完成（versionCode 3）
 
 本轮五件事，都已实现：
 
@@ -18,8 +28,9 @@
 3. **全屏（隐藏状态栏）**
    - `MainActivity.hideSystemUi()`：API 30+ 用 `WindowInsetsController.hide(statusBars)`，
      旧系统用 `SYSTEM_UI_FLAG_FULLSCREEN | IMMERSIVE_STICKY`；`onWindowFocusChanged` 里补隐藏一次
-   - 顶部 inset 改成只取刘海高度（`getInsetsIgnoringVisibility(displayCutout)`），
+   - 顶部 inset 一开始取的是刘海高度（`getInsetsIgnoringVisibility(displayCutout)`），
      所以从顶部下滑临时唤出状态栏时布局不会跳；导航栏保留
+   - 1.3 已把顶部 inset 改成 0（见上），这一条只作为 1.2 的记录
    - 顶栏因此上移 66 px：`barTop = 12dp`（33～132 px），顶栏按钮的点击区也跟着上移
 4. **双方吃子**
    - 棋盘上方一行「黑方吃子」，下方一行「红方吃子」，吃掉的子按顺序排开（最多 15 个，一排放得下）
@@ -86,8 +97,10 @@ p_red = 1 / (1 + 10 ^ (-score_red / 400))
 
 ### D. 恢复提示 / 求和 / 认输
 
-实现都还在 `GameView.kt` 里（`startHint` / `offerDraw` / `askResign`），只是没有按钮入口。
-恢复时接回顶栏或新的操作栏即可，不用重写。
+界面代码在 1.2 已全部删除（`startHint` / `offerDraw` / `askResign` / toast / 提示箭头 / 三态确认弹窗），
+只有 `Game.resign()` / `agreeDraw()` / `material()` 留在逻辑层。
+
+恢复时要连 UI 一起重写，不能只接一个按钮；建议和「双人对等」一起设计，避免又做成只有一侧能按。
 
 ---
 
