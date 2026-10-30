@@ -21,3 +21,9 @@ desktop.ini
 # 临时文件
 *.log
 *.hprof
+
+# 内部文档（只在本地，不入库；对外只留 README / CHANGELOG / dist 里的包清单）
+/AGENTS.md
+/TODO.md
+/RELEASE.md
+/HANDOVER.md

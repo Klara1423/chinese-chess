@@ -31,7 +31,7 @@ dist/中国象棋-1.3.apk
 
 > 「提示 / 求和 / 认输」的界面入口在 v1.1 就摘掉了（`GameView.kt` 里的绘制与弹窗代码已在 1.2 删除，
 > `Game.resign()` / `agreeDraw()` 仍在逻辑层），原因是双人对坐时只有下方那侧够得着按钮，
-> 做不到两边对等。等布局方案定了再接回来，见 [TODO.md](TODO.md)「待解决」。
+> 做不到两边对等。等布局方案定了再接回来。
 
 ## 字体与图标
 
@@ -107,7 +107,7 @@ I XiangqiPerft: depth=3 nodes=79666 expected=79666 OK
 
 - 版本号写在 `app/build.gradle.kts` 的 `defaultConfig` 里：`versionCode`（每次发版 +1，Android 靠它判断是不是升级）和 `versionName`（给人看的）
 - 打好的包 `dist/中国象棋-X.Y.apk`：`dist/` 只留**当前**这一版，旧包移进 `dist/历史版本/`，清单见 [dist/INDEX.md](dist/INDEX.md)
-- 版本定稿后再改才升号；定稿前的反复调整是同版本覆盖（流程见 [RELEASE.md](RELEASE.md)「同版本覆盖」）
+- 版本定稿后再改才升号；定稿前的反复调整是同版本覆盖（同一版本号的包直接换掉，`CHANGELOG.md` 里仍是同一节）
 - 每次改动都记在 `CHANGELOG.md`，发版不必再补
 - App 菜单右下角会显示当前 `versionName`
 
