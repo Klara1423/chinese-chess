@@ -131,8 +131,9 @@ build.bat assembleRelease    :: 正式包
 
 ## 签名
 
-`keystore/xiangqi.jks`，口令 `xiangqi2026`，别名 `xiangqi`。
-`keystore/keystore.properties` 里是构建时读取的配置。这个密钥丢了就没法覆盖升级，建议自己备份一份。
+`keystore/xiangqi.jks`（不入库），别名 `xiangqi`，口令写在本地 `keystore/keystore.properties`，构建时读取。
+这个密钥丢了就没法给老用户做覆盖升级，**必须单独备份**（密钥 + 口令一起，别只备份 jks）。
+口令不要写进 README、提交信息或任何会发布的文件——`dist/` 里的包已经签好名，别人拿到包也不需要口令。
 
 ## 还能加什么
 
