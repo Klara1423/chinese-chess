@@ -920,8 +920,9 @@ class GameView(context: Context) : View(context) {
         }
         riverChar("楚", cx(2) - charDx, riverY, -90f)
         riverChar("河", cx(2) + charDx, riverY, -90f)
-        riverChar("漢", cx(6) - charDx, riverY, 90f)
-        riverChar("界", cx(6) + charDx, riverY, 90f)
+        // 右边这组是「漢界」：漢在右端、界在左端（之前写反了，按实机截图对比改回来）
+        riverChar("界", cx(6) - charDx, riverY, 90f)
+        riverChar("漢", cx(6) + charDx, riverY, 90f)
         textPaint.typeface = SANS
     }
 
