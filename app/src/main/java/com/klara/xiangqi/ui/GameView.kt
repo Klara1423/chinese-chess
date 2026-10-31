@@ -147,9 +147,10 @@ class GameView(context: Context) : View(context) {
     init {
         setOnApplyWindowInsetsListener { _, insets ->
             if (Build.VERSION.SDK_INT >= 30) {
-                // 状态栏已隐藏：顶栏直接贴屏幕顶，不再为挖孔 / 刘海保留安全区。
-                // 用户明确选择“全部上移”，宁可让摄像头孔压住左上角按钮，也不要顶部一条空白。
-                topInset = 0
+                // 顶部只让出「挖孔本身」：取孔矩形的下沿 + 6dp，而不是 1.2 用的那条整块安全区。
+                // 没孔的手机 holeBottom = 0，顶部就还是贴屏幕顶；有孔的机器让出多少由孔自己决定。
+                val holeBottom = insets.displayCutout?.boundingRects?.maxOfOrNull { it.bottom } ?: 0
+                topInset = if (holeBottom > 0) holeBottom + dp(6f).toInt() else 0
                 bottomInset = insets.getInsets(WindowInsets.Type.navigationBars()).bottom
             } else {
                 @Suppress("DEPRECATION")
