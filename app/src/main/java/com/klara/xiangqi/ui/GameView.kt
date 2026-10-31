@@ -147,10 +147,14 @@ class GameView(context: Context) : View(context) {
     init {
         setOnApplyWindowInsetsListener { _, insets ->
             if (Build.VERSION.SDK_INT >= 30) {
-                // 顶部只让出「挖孔本身」：取孔矩形的下沿 + 6dp，而不是 1.2 用的那条整块安全区。
-                // 没孔的手机 holeBottom = 0，顶部就还是贴屏幕顶；有孔的机器让出多少由孔自己决定。
-                val holeBottom = insets.displayCutout?.boundingRects?.maxOfOrNull { it.bottom } ?: 0
-                topInset = if (holeBottom > 0) holeBottom + dp(6f).toInt() else 0
+                // 顶部留白 = 系统给的挖孔安全区，但最多 29.1dp（80 px @440dpi）。
+                // 系统报的是一条「安全区」，把状态栏高度也算进去了（这台 111、10S 90），
+                // 比摄像头实体孔的下沿高出一截；实体孔的圆 Android 不暴露。
+                // 所以按上限截断：孔比 27dp 小的机器自动跟着孔走，比它大的统一停在 27dp，
+                // 换手机不用再逐个量。顶栏自带 12dp 内边距，扣掉后按钮顶边正好落在这条线上。
+                val safeTop = insets.getInsetsIgnoringVisibility(WindowInsets.Type.displayCutout()).top
+                val band = minOf(safeTop.toFloat(), dp(29.1f))
+                topInset = (band - dp(12f)).coerceAtLeast(0f).toInt()
                 bottomInset = insets.getInsets(WindowInsets.Type.navigationBars()).bottom
             } else {
                 @Suppress("DEPRECATION")
