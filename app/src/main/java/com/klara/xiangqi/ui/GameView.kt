@@ -150,7 +150,7 @@ class GameView(context: Context) : View(context) {
                 // 顶部留白 = 系统给的挖孔安全区，但最多 29.1dp（80 px @440dpi）。
                 // 系统报的是一条「安全区」，把状态栏高度也算进去了（这台 111、10S 90），
                 // 比摄像头实体孔的下沿高出一截；实体孔的圆 Android 不暴露。
-                // 所以按上限截断：孔比 27dp 小的机器自动跟着孔走，比它大的统一停在 27dp，
+                // 所以按上限截断：孔比 29.1dp 小的机器自动跟着孔走，比它大的统一停在 29.1dp，
                 // 换手机不用再逐个量。顶栏自带 12dp 内边距，扣掉后按钮顶边正好落在这条线上。
                 val safeTop = insets.getInsetsIgnoringVisibility(WindowInsets.Type.displayCutout()).top
                 val band = minOf(safeTop.toFloat(), dp(29.1f))
