@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.LinearGradient
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
@@ -21,6 +22,7 @@ import com.klara.xiangqi.game.Difficulty
 import com.klara.xiangqi.game.Game
 import com.klara.xiangqi.game.Kind
 import com.klara.xiangqi.game.MoveGen
+import com.klara.xiangqi.game.MoveNamer
 import com.klara.xiangqi.game.Side
 import com.klara.xiangqi.game.Ai
 import com.klara.xiangqi.game.colOf
@@ -31,6 +33,7 @@ import com.klara.xiangqi.game.sideOf
 import kotlin.math.min
 import kotlin.math.round
 import kotlin.math.sin
+import kotlin.math.sqrt
 
 /**
  * 整个界面用一块 Canvas 绘制：主菜单 + 棋盘 + 对局信息，避免 Fragment/Compose 依赖。
@@ -43,6 +46,8 @@ class GameView(context: Context) : View(context) {
     // ---------- 状态 ----------
     private val game = Game()
     private val ai = Ai()
+    /** 提示用的独立引擎实例，避免和电脑落子线程共用置换表 */
+    private val hintAi = Ai()
     private var screen = Screen.MENU
     private var mode = Mode.AI
     private var difficulty = Difficulty.NORMAL
@@ -58,6 +63,12 @@ class GameView(context: Context) : View(context) {
     private var downY = 0f
 
     private var thinking = false
+    /** 正在后台计算提示着法 */
+    private var hintThinking = false
+    /** 提示的着法（-1 表示没有提示） */
+    private var hintMove = -1
+    /** 提示着法的中文记谱，显示在底部状态栏 */
+    private var hintName = ""
     private var animating = false
     private var animFrom = -1
     private var animTo = -1
@@ -111,6 +122,7 @@ class GameView(context: Context) : View(context) {
     }
     private val tmpRect = RectF()
     private val tmpRect2 = RectF()
+    private val hintPath = Path()
 
     private var bgShader: Shader? = null
     private var panelShader: Shader? = null
@@ -123,6 +135,7 @@ class GameView(context: Context) : View(context) {
     private val backRect = RectF()
     private val undoRect = RectF()
     private val restartRect = RectF()
+    private val hintRect = RectF()
     private val confirmCancelRect = RectF()
     private val confirmOkRect = RectF()
     private val againRect = RectF()
@@ -295,6 +308,10 @@ class GameView(context: Context) : View(context) {
                     invalidate()
                     return true
                 }
+                if (mode == Mode.AI && hintRect.contains(x, y)) {
+                    startHint()
+                    return true
+                }
                 if (logVisible) {
                     // 弹层打开时，点面板以外的地方收起
                     if (!logCardRect.contains(x, y)) {
@@ -445,6 +462,9 @@ class GameView(context: Context) : View(context) {
     private fun goMenu() {
         generation++
         thinking = false
+        hintThinking = false
+        hintMove = -1
+        hintName = ""
         logVisible = false
         confirmExit = false
         screen = Screen.MENU
@@ -465,6 +485,9 @@ class GameView(context: Context) : View(context) {
         dragging = false
         pressing = false
         thinking = false
+        hintThinking = false
+        hintMove = -1
+        hintName = ""
         logVisible = false
         confirmExit = false
         animating = false
@@ -480,6 +503,10 @@ class GameView(context: Context) : View(context) {
         if (!game.play(from, to)) return
         selected = -1
         targets = IntArray(0)
+        // 走子后提示就过期了
+        hintThinking = false
+        hintMove = -1
+        hintName = ""
         startAnimation(from, to)
         haptic(HapticFeedbackConstants.VIRTUAL_KEY)
         if (game.finished) {
@@ -503,6 +530,9 @@ class GameView(context: Context) : View(context) {
         if (thinking) return
         generation++
         thinking = false
+        hintThinking = false
+        hintMove = -1
+        hintName = ""
         // 人机模式下退回到自己该走棋的局面
         val steps = if (mode == Mode.AI && game.plyCount >= 2) 2 else 1
         repeat(steps) {
@@ -514,6 +544,37 @@ class GameView(context: Context) : View(context) {
         finishedAt = 0L
         haptic(HapticFeedbackConstants.KEYBOARD_TAP)
         invalidate()
+    }
+
+    /** 人机模式：让引擎给出当前局面的推荐着法，只标在棋盘上，不替玩家落子。再点一次收起。 */
+    private fun startHint() {
+        if (mode != Mode.AI || thinking || hintThinking || game.finished) return
+        if (game.sideToMove != Side.RED) return
+        if (hintMove >= 0) {
+            hintMove = -1
+            hintName = ""
+            invalidate()
+            return
+        }
+        hintThinking = true
+        val gen = generation
+        val ply = game.plyCount
+        val snapshot = game.board.copy()
+        invalidate()
+        Thread {
+            val move = hintAi.chooseMove(snapshot, Difficulty.NORMAL)
+            val name = if (move != 0) MoveNamer.name(snapshot, move) else ""
+            post {
+                if (gen != generation) return@post
+                hintThinking = false
+                if (move != 0 && game.plyCount == ply && !game.finished && game.sideToMove == Side.RED) {
+                    hintMove = move
+                    hintName = name
+                    haptic(HapticFeedbackConstants.KEYBOARD_TAP)
+                }
+                invalidate()
+            }
+        }.apply { isDaemon = true }.start()
     }
 
     private fun startThinking() {
@@ -765,6 +826,7 @@ class GameView(context: Context) : View(context) {
         drawTopBar(canvas)
         drawBoard(canvas)
         drawPieces(canvas)
+        drawHint(canvas)
         drawCapturedRows(canvas)
         drawLogPanel(canvas)
         drawBottomBar(canvas)
@@ -801,7 +863,7 @@ class GameView(context: Context) : View(context) {
         textPaint.typeface = SANS_MEDIUM
         textPaint.textSize = dp(14f)
         val fm = textPaint.fontMetrics
-        // 双人模式在「菜单」右边多一个棋谱开关
+        // 「菜单」右边：人机是「提示」，双人是「棋谱」开关；两边的标题都从按钮右边开始居中
         var titleLeft = backRect.right
         if (mode == Mode.PVP) {
             logToggleRect.set(
@@ -810,6 +872,16 @@ class GameView(context: Context) : View(context) {
             )
             drawPill(canvas, logToggleRect, if (logVisible) "收起" else "棋谱", true)
             titleLeft = logToggleRect.right
+        } else {
+            hintRect.set(
+                backRect.right + dp(8f), barTop,
+                backRect.right + dp(8f) + dp(56f), barTop + barH
+            )
+            // 电脑思考、计算提示、棋局结束、轮黑走时都不能点
+            val hintEnabled = !thinking && !hintThinking && !game.finished &&
+                game.sideToMove == Side.RED && !confirmExit
+            drawPill(canvas, hintRect, "提示", hintEnabled)
+            titleLeft = hintRect.right
         }
         val titleCx = (titleLeft + undoRect.left) / 2f
         canvas.drawText(title, titleCx, barTop + barH / 2f - (fm.ascent + fm.descent) / 2f, textPaint)
@@ -1050,6 +1122,53 @@ class GameView(context: Context) : View(context) {
         }
     }
 
+    /**
+     * 提示着法：起点画绿圈，再用箭头指向目标格（沿用 1.1 的样式，颜色收进 `Theme`）。
+     * 画在棋子之上，箭头才不会被目标格上的子挡住。
+     */
+    private fun drawHint(canvas: Canvas) {
+        if (hintMove < 0) return
+        val from = MoveGen.fromOf(hintMove)
+        val to = MoveGen.toOf(hintMove)
+        val fx = cx(colOf(from))
+        val fy = cy(rowOf(from))
+        val tx = cx(colOf(to))
+        val ty = cy(rowOf(to))
+
+        paint.style = Paint.Style.FILL
+        paint.alpha = 255
+
+        linePaint.color = C_HINT
+        linePaint.strokeWidth = dp(2.6f)
+        canvas.drawCircle(fx, fy, cell * 0.48f, linePaint)
+
+        val dx = tx - fx
+        val dy = ty - fy
+        val len = sqrt(dx * dx + dy * dy)
+        if (len < 1f) return
+        val ux = dx / len
+        val uy = dy / len
+
+        val head = cell * 0.30f
+        val sx = fx + ux * cell * 0.54f
+        val sy = fy + uy * cell * 0.54f
+        val ex = tx - ux * cell * 0.54f
+        val ey = ty - uy * cell * 0.54f
+
+        linePaint.strokeWidth = cell * 0.115f
+        canvas.drawLine(sx, sy, ex - ux * head * 0.7f, ey - uy * head * 0.7f, linePaint)
+
+        val px = -uy
+        val py = ux
+        hintPath.reset()
+        hintPath.moveTo(ex, ey)
+        hintPath.lineTo(ex - ux * head + px * head * 0.72f, ey - uy * head + py * head * 0.72f)
+        hintPath.lineTo(ex - ux * head - px * head * 0.72f, ey - uy * head - py * head * 0.72f)
+        hintPath.close()
+        paint.color = C_HINT
+        canvas.drawPath(hintPath, paint)
+    }
+
     private fun drawPieceAt(canvas: Canvas, piece: Int, x: Float, y: Float, size: Float) {
         val bmp = pieceBitmaps[piece] ?: return
         val h = size / 2f
@@ -1257,6 +1376,9 @@ class GameView(context: Context) : View(context) {
                 else -> "黑方胜" to 0xFF9FB3C8.toInt()
             }
             thinking -> "电脑思考中…" to C_GOLD
+            hintThinking -> "正在计算提示…" to C_GOLD
+            hintName.isNotEmpty() && game.inCheck -> "将军！提示：$hintName" to C_HINT_TEXT
+            hintName.isNotEmpty() -> "提示：$hintName" to C_HINT_TEXT
             game.inCheck -> "将军！${Side.name(turn)}应将" to 0xFFD96A5A.toInt()
             else -> "${Side.name(turn)}走棋" to C_GOLD
         }

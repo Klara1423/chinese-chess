@@ -17,6 +17,10 @@ internal val C_GOLD = 0xFFE2BE79.toInt()
 internal val C_RED = 0xFFC0392B.toInt()
 internal val C_TEXT_DIM = 0xFFB7A489.toInt()
 
+/** 提示：棋盘上的起点圈 / 箭头，以及状态栏的提示文字 */
+internal val C_HINT = 0xCC2E9E5B.toInt()
+internal val C_HINT_TEXT = 0xFF7ED69C.toInt()
+
 /** 正文用的常规无衬线 */
 internal val SANS = Typeface.create("sans-serif", Typeface.NORMAL)
 
