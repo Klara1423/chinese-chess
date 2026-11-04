@@ -32,6 +32,19 @@ class Game {
     var endReason: Int = 0
         private set
 
+    /**
+     * 复盘光标：-1 表示正在看实时局面（或棋局还在进行），
+     * 否则是当前显示到第几步（0 = 开局，history.size = 终局）。
+     */
+    var reviewPly: Int = -1
+        private set
+
+    /** 是否处于复盘状态（棋盘暂时回退到历史某一步，历史本身不动） */
+    val reviewing: Boolean get() = reviewPly >= 0
+
+    /** 当前应该显示到第几步：复盘看光标，平时看全部历史 */
+    val visiblePly: Int get() = if (reviewPly >= 0) reviewPly else history.size
+
     private var quietPlies: Int = 0
 
     init {
@@ -52,6 +65,7 @@ class Game {
         winner = -1
         endReason = 0
         quietPlies = 0
+        reviewPly = -1
     }
 
     /** 该格子上的棋子是否可以由当前行棋方操作 */
@@ -80,7 +94,7 @@ class Game {
 
     /** 落子，返回是否成功 */
     fun play(from: Int, to: Int): Boolean {
-        if (finished) return false
+        if (finished || reviewing) return false
         if (from < 0 || from >= BOARD_SIZE || to < 0 || to >= BOARD_SIZE) return false
         if (!isOwnPiece(from)) return false
         val move = MoveGen.makeMove(from, to)
@@ -100,7 +114,7 @@ class Game {
         return true
     }
 
-    fun canUndo(): Boolean = history.isNotEmpty()
+    fun canUndo(): Boolean = history.isNotEmpty() && !reviewing
 
     /** 已走步数 */
     val plyCount: Int get() = history.size
@@ -108,13 +122,15 @@ class Game {
     /**
      * 某一方吃掉的全部棋子（按吃掉的先后顺序）。
      * 被吃子的阵营必然是对手，所以不用额外记「谁吃的」。
+     * 复盘时只统计到当前光标那一步，和棋盘上的局面保持一致。
      */
     fun capturedPieces(side: Int): IntArray {
         val out = IntArray(16)
         var n = 0
-        for (rec in history) {
-            if (rec.captured == 0) continue
-            if (Side.other(sideOf(rec.captured)) == side) out[n++] = rec.captured
+        for (i in 0 until visiblePly) {
+            val captured = history[i].captured
+            if (captured == 0) continue
+            if (Side.other(sideOf(captured)) == side) out[n++] = captured
         }
         return out.copyOf(n)
     }
@@ -124,8 +140,73 @@ class Game {
     fun moveAt(index: Int): String =
         if (index in notations.indices) notations[index] else ""
 
+    // ---------- 存档 / 复盘 ----------
+
+    /** 存档用：按顺序导出历史着法（棋盘、棋谱、吃子记录都能由它重放出来） */
+    fun movesSnapshot(): IntArray {
+        val out = IntArray(history.size)
+        for (i in history.indices) out[i] = history[i].move
+        return out
+    }
+
+    /** 从存档恢复：重放整局，重建棋盘、棋谱、吃子记录和胜负状态 */
+    fun restoreMoves(moves: IntArray): Boolean {
+        reset()
+        for (m in moves) {
+            if (!play(MoveGen.fromOf(m), MoveGen.toOf(m))) {
+                reset()
+                return false
+            }
+        }
+        return true
+    }
+
+    /** 进入复盘：棋盘回到终局，之后用 reviewPrev / reviewNext 前后翻 */
+    fun enterReview(): Boolean {
+        if (history.isEmpty()) return false
+        reviewPly = history.size
+        rebuildTo(reviewPly)
+        return true
+    }
+
+    /** 复盘上一步，成功返回 true */
+    fun reviewPrev(): Boolean {
+        if (reviewPly <= 0) return false
+        reviewPly--
+        rebuildTo(reviewPly)
+        return true
+    }
+
+    /** 复盘下一步，成功返回 true */
+    fun reviewNext(): Boolean {
+        if (reviewPly < 0 || reviewPly >= history.size) return false
+        reviewPly++
+        rebuildTo(reviewPly)
+        return true
+    }
+
+    /** 退出复盘，棋盘恢复到终局 */
+    fun exitReview() {
+        if (reviewPly < 0) return
+        reviewPly = -1
+        rebuildTo(history.size)
+        quietPlies = computeQuietPlies()
+    }
+
+    /**
+     * 把棋盘重放到第 ply 步（0 = 开局）。只动棋盘和「上一步」标记，
+     * 不动历史 / 棋谱 / 胜负结果，所以前后翻页不会丢着法。
+     */
+    private fun rebuildTo(ply: Int) {
+        board.reset()
+        for (i in 0 until ply) board.make(history[i].move)
+        lastMove = if (ply == 0) -1 else history[ply - 1].move
+        lastMovedPiece = if (ply == 0) 0 else history[ply - 1].piece
+    }
+
     /** 悔棋一步 */
     fun undo(): Boolean {
+        if (reviewing) return false
         if (history.isEmpty()) return false
         val rec = history.removeAt(history.size - 1)
         board.unmake(rec.move, rec.captured)

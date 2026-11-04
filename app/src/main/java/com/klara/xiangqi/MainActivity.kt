@@ -140,6 +140,8 @@ class MainActivity : Activity() {
     }
 
     override fun onPause() {
+        // 双人模式：进后台再兜底存一次，进程被系统回收也还在
+        gameView.onHostPause()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             backCallback?.let { onBackInvokedDispatcher.unregisterOnBackInvokedCallback(it) }
         }
