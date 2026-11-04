@@ -7,13 +7,17 @@ class Game {
 
     val board = Board()
 
-    private class Record(val move: Int, val captured: Int)
+    private class Record(val move: Int, val piece: Int, val captured: Int)
 
     private val history = ArrayList<Record>(128)
     private val hashes = ArrayList<Long>(128)
     private val notations = ArrayList<String>(128)
 
     var lastMove: Int = -1
+        private set
+
+    /** 上一步被移动的棋子（画「残影」用；0 表示没有） */
+    var lastMovedPiece: Int = 0
         private set
 
     /** true 表示已结束 */
@@ -43,6 +47,7 @@ class Game {
         notations.clear()
         hashes.add(board.hash)
         lastMove = -1
+        lastMovedPiece = 0
         finished = false
         winner = -1
         endReason = 0
@@ -83,11 +88,13 @@ class Game {
 
         // 记谱必须在走子之前根据当前局面生成
         val notation = MoveNamer.name(board, move)
+        val moving = board.cells[from]
         val captured = board.make(move)
-        history.add(Record(move, captured))
+        history.add(Record(move, moving, captured))
         notations.add(notation)
         hashes.add(board.hash)
         lastMove = move
+        lastMovedPiece = moving
         quietPlies = if (captured != 0) 0 else quietPlies + 1
         updateStatus()
         return true
@@ -125,6 +132,7 @@ class Game {
         if (hashes.size > 1) hashes.removeAt(hashes.size - 1)
         if (notations.isNotEmpty()) notations.removeAt(notations.size - 1)
         lastMove = if (history.isEmpty()) -1 else history[history.size - 1].move
+        lastMovedPiece = if (history.isEmpty()) 0 else history[history.size - 1].piece
         finished = false
         winner = -1
         endReason = 0

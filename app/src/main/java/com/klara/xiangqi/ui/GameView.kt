@@ -560,9 +560,11 @@ class GameView(context: Context) : View(context) {
         val gen = generation
         val ply = game.plyCount
         val snapshot = game.board.copy()
+        // 提示至少用「困难」档：低档位带随手棋，会把提示带偏；菜单选大师时就让提示也跑大师。
+        val level = if (difficulty.ordinal >= Difficulty.HARD.ordinal) difficulty else Difficulty.HARD
         invalidate()
         Thread {
-            val move = hintAi.chooseMove(snapshot, Difficulty.NORMAL)
+            val move = hintAi.chooseMove(snapshot, level)
             val name = if (move != 0) MoveNamer.name(snapshot, move) else ""
             post {
                 if (gen != generation) return@post
@@ -1088,6 +1090,14 @@ class GameView(context: Context) : View(context) {
             drawPieceAt(canvas, p, x, y, size)
         }
 
+        // 上一步的残影：在起点留一个淡棋子，下一步落子时自然被替换
+        if (game.lastMove >= 0 && game.lastMovedPiece != 0) {
+            val from = MoveGen.fromOf(game.lastMove)
+            paint.alpha = 64
+            drawPieceAt(canvas, game.lastMovedPiece, cx(colOf(from)), cy(rowOf(from)), size)
+            paint.alpha = 255
+        }
+
         // 走子动画
         if (animating) {
             val t = ((SystemClock.uptimeMillis() - animStartAt) / 190f).coerceIn(0f, 1f)
@@ -1141,6 +1151,19 @@ class GameView(context: Context) : View(context) {
         linePaint.color = C_HINT
         linePaint.strokeWidth = dp(2.6f)
         canvas.drawCircle(fx, fy, cell * 0.48f, linePaint)
+
+        // 落点：空位画实心绿点，可吃子画绿圈——绿点压在棋子上会挡住字
+        if (game.board.cells[to] != 0) {
+            linePaint.color = C_HINT
+            linePaint.strokeWidth = dp(3f)
+            canvas.drawCircle(tx, ty, cell * 0.44f, linePaint)
+        } else {
+            paint.color = C_HINT
+            paint.alpha = 55
+            canvas.drawCircle(tx, ty, cell * 0.20f, paint)
+            paint.alpha = 255
+            canvas.drawCircle(tx, ty, cell * 0.12f, paint)
+        }
 
         val dx = tx - fx
         val dy = ty - fy
