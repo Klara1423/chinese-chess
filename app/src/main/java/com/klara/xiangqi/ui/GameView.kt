@@ -18,6 +18,7 @@ import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowInsets
 import com.klara.xiangqi.game.BOARD_SIZE
+import com.klara.xiangqi.game.Board
 import com.klara.xiangqi.game.Difficulty
 import com.klara.xiangqi.game.Game
 import com.klara.xiangqi.game.Kind
@@ -51,6 +52,18 @@ class GameView(context: Context) : View(context) {
     private var screen = Screen.MENU
     private var mode = Mode.AI
     private var difficulty = Difficulty.NORMAL
+
+    // ---------- 人机执子 / 让子 ----------
+    /** 人机模式下玩家执哪一方（红先走，执黑时电脑先走） */
+    private var humanSide = Side.RED
+    /** 人机、双人各自的让子：开局被拿掉的格子 */
+    private var aiRemoved = IntArray(0)
+    private var pvpRemoved = IntArray(0)
+    /** 设置卡片是否打开，以及它是给哪个入口用的 */
+    private var setupVisible = false
+    private var setupMode = Mode.AI
+    /** 让子小盘始终摆开局，被拿掉的子画淡 + 划线（不真的从棋盘上挖空） */
+    private val setupBoard = Board()
 
     private var selected = -1
     private var targets = IntArray(0)
@@ -152,6 +165,18 @@ class GameView(context: Context) : View(context) {
     private val settleRect = RectF()
     private val saveRect = RectF()
 
+    // 开局设置卡片（人机 / 双人共用）
+    private val setupCardRect = RectF()
+    private val setupRedRect = RectF()
+    private val setupBlackRect = RectF()
+    private val setupClearRect = RectF()
+    private val setupStartRect = RectF()
+    private val setupCancelRect = RectF()
+    /** 让子小盘的几何：画的时候算一次，点的时候按同一套坐标反推 */
+    private var setupCell = 0f
+    private var setupLeft = 0f
+    private var setupTop = 0f
+
     /** 「退出对局？」二次确认是否打开 */
     private var confirmExit = false
 
@@ -167,6 +192,9 @@ class GameView(context: Context) : View(context) {
 
     init {
         difficulty = Difficulty.fromName(prefs.getString("difficulty", null))
+        humanSide = if (prefs.getString(KEY_AI_SIDE, null) == "BLACK") Side.BLACK else Side.RED
+        aiRemoved = parseSquares(prefs.getString(KEY_AI_REMOVED, null))
+        pvpRemoved = parseSquares(prefs.getString(KEY_PVP_REMOVED, null))
         hasPvpSave = !prefs.getString(SAVE_KEY, null).isNullOrEmpty()
         pvpSavePly = prefs.getInt(SAVE_PLY_KEY, 0)
         setLayerType(LAYER_TYPE_HARDWARE, null)
@@ -255,9 +283,41 @@ class GameView(context: Context) : View(context) {
 
     private fun dp(v: Float): Float = v * density
 
-    private fun cx(col: Int): Float = boardLeft + col * cell
+    /** 人机执黑时棋盘翻转：黑方在下，自己的子就在手边（棋子上的字不跟着转） */
+    private val flipped: Boolean get() = mode == Mode.AI && humanSide == Side.BLACK
 
-    private fun cy(row: Int): Float = boardTop + row * cell
+    private fun cx(col: Int): Float = boardLeft + (if (flipped) 8 - col else col) * cell
+
+    private fun cy(row: Int): Float = boardTop + (if (flipped) 9 - row else row) * cell
+
+    /** 棋盘装饰（楚河汉界）固定在屏幕上的位置，不跟着翻转跑 */
+    private fun bx(col: Int): Float = boardLeft + col * cell
+
+    private val aiSide: Int get() = Side.other(humanSide)
+
+    /** 这枚子现在能不能由玩家操作：人机模式下只认自己那一方 */
+    private fun canPick(sq: Int): Boolean =
+        game.isOwnPiece(sq) && (mode != Mode.AI || game.sideToMove == humanSide)
+
+    /** 悔棋只退到玩家自己该走的局面：执黑时至少要先走完电脑的开局那一步 */
+    private fun canUndoNow(): Boolean =
+        game.canUndo() && !thinking && !confirmExit &&
+            (mode != Mode.AI || game.plyCount >= if (humanSide == Side.BLACK) 2 else 1)
+
+    private fun sideLabel(side: Int): String = if (side == Side.RED) "红" else "黑"
+
+    private fun parseSquares(raw: String?): IntArray {
+        if (raw.isNullOrEmpty()) return IntArray(0)
+        return try {
+            raw.split(",").map { it.toInt() }.filter { it in 0 until BOARD_SIZE }.distinct().sorted().toIntArray()
+        } catch (e: Exception) {
+            IntArray(0)
+        }
+    }
+
+    private fun formatSquares(squares: IntArray): String = squares.joinToString(",")
+
+    private fun removedFor(m: Mode): IntArray = if (m == Mode.AI) aiRemoved else pvpRemoved
 
     // ============================================================
     // 触控
@@ -277,7 +337,7 @@ class GameView(context: Context) : View(context) {
                 if (game.finished) return true
                 if (thinking) return true
                 val sq = squareAt(x, y, 0.62f)
-                if (sq >= 0 && game.isOwnPiece(sq)) {
+                if (sq >= 0 && canPick(sq)) {
                     selected = sq
                     targets = game.legalTargets(sq)
                     pressSq = sq
@@ -316,7 +376,7 @@ class GameView(context: Context) : View(context) {
 
             MotionEvent.ACTION_UP -> {
                 if (screen == Screen.MENU) {
-                    handleMenuTap(x, y)
+                    if (setupVisible) handleSetupTap(x, y) else handleMenuTap(x, y)
                     return true
                 }
                 if (confirmExit) {
@@ -463,10 +523,10 @@ class GameView(context: Context) : View(context) {
 
     private fun handleMenuTap(x: Float, y: Float) {
         if (menuAiRect.contains(x, y)) {
-            startNewGame(Mode.AI)
+            openSetup(Mode.AI)
         } else if (menuPvpRect.contains(x, y)) {
-            // 有存档就直接接着上次的走；没有才开新局
-            if (!resumePvpGame()) startNewGame(Mode.PVP)
+            // 有存档就直接接着上次的走（设置只在新开一局时出现）；没有才开设置卡片
+            if (!resumePvpGame()) openSetup(Mode.PVP)
         } else {
             Difficulty.entries.forEachIndexed { i, d ->
                 if (diffRects[i].contains(x, y)) {
@@ -479,28 +539,112 @@ class GameView(context: Context) : View(context) {
         }
     }
 
+    // ============================================================
+    // 开局设置（人机：执红 / 执黑 + 让子；双人：让子）
+    // ============================================================
+
+    /** 只有在新开一局之前才有这个卡片：对局中、复盘时都进不来 */
+    private fun openSetup(m: Mode) {
+        setupMode = m
+        setupVisible = true
+        haptic(HapticFeedbackConstants.KEYBOARD_TAP)
+        invalidate()
+    }
+
+    private fun handleSetupTap(x: Float, y: Float) {
+        when {
+            setupStartRect.contains(x, y) -> {
+                setupVisible = false
+                haptic(HapticFeedbackConstants.KEYBOARD_TAP)
+                startNewGame(setupMode)
+            }
+
+            setupCancelRect.contains(x, y) || !setupCardRect.contains(x, y) -> {
+                setupVisible = false
+                invalidate()
+            }
+
+            setupMode == Mode.AI && setupRedRect.contains(x, y) -> setHumanSide(Side.RED)
+            setupMode == Mode.AI && setupBlackRect.contains(x, y) -> setHumanSide(Side.BLACK)
+
+            setupClearRect.width() > 0f && setupClearRect.contains(x, y) -> clearHandicap()
+
+            setupCell > 0f -> {
+                val sc = round((x - setupLeft) / setupCell).toInt()
+                val sr = round((y - setupTop) / setupCell).toInt()
+                if (sc in 0..8 && sr in 0..9) {
+                    val dx = x - (setupLeft + sc * setupCell)
+                    val dy = y - (setupTop + sr * setupCell)
+                    if (dx * dx + dy * dy <= (setupCell * 0.55f) * (setupCell * 0.55f)) {
+                        toggleHandicap(sr * 9 + sc)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun setHumanSide(side: Int) {
+        if (humanSide == side) return
+        humanSide = side
+        prefs.edit().putString(KEY_AI_SIDE, if (side == Side.BLACK) "BLACK" else "RED").apply()
+        haptic(HapticFeedbackConstants.KEYBOARD_TAP)
+        invalidate()
+    }
+
+    /** 点小盘上的棋子：拿掉 / 放回。将帅不能动 */
+    private fun toggleHandicap(sq: Int) {
+        if (sq !in 0 until BOARD_SIZE) return
+        val piece = setupBoard.cells[sq]
+        if (piece == 0 || kindOf(piece) == Kind.KING) return
+        val list = removedFor(setupMode).toMutableList()
+        if (!list.remove(sq)) list.add(sq)
+        list.sort()
+        setRemoved(setupMode, list.toIntArray())
+    }
+
+    private fun clearHandicap() {
+        if (removedFor(setupMode).isEmpty()) return
+        setRemoved(setupMode, IntArray(0))
+    }
+
+    private fun setRemoved(m: Mode, squares: IntArray) {
+        if (m == Mode.AI) {
+            aiRemoved = squares
+            prefs.edit().putString(KEY_AI_REMOVED, formatSquares(squares)).apply()
+        } else {
+            pvpRemoved = squares
+            prefs.edit().putString(KEY_PVP_REMOVED, formatSquares(squares)).apply()
+        }
+        haptic(HapticFeedbackConstants.KEYBOARD_TAP)
+        invalidate()
+    }
+
     private fun squareAt(x: Float, y: Float, tol: Float): Int {
         if (cell <= 0f) return -1
-        val c = round((x - boardLeft) / cell).toInt()
-        val r = round((y - boardTop) / cell).toInt()
-        if (c < 0 || c > 8 || r < 0 || r > 9) return -1
-        val dx = x - cx(c)
-        val dy = y - cy(r)
+        val sc = round((x - boardLeft) / cell).toInt()
+        val sr = round((y - boardTop) / cell).toInt()
+        if (sc < 0 || sc > 8 || sr < 0 || sr > 9) return -1
+        val dx = x - bx(sc)
+        val dy = y - (boardTop + sr * cell)
         val limit = cell * tol
         if (dx * dx + dy * dy > limit * limit) return -1
-        return r * 9 + c
+        val col = if (flipped) 8 - sc else sc
+        val row = if (flipped) 9 - sr else sr
+        return row * 9 + col
     }
 
     /** 拖动时的手指位置如果落在某个合法落点（或原位）附近，就返回那个格子，否则 -1 */
     private fun snapTargetAt(x: Float, y: Float): Int {
         if (cell <= 0f || selected < 0) return -1
-        val c = round((x - boardLeft) / cell).toInt()
-        val r = round((y - boardTop) / cell).toInt()
-        if (c < 0 || c > 8 || r < 0 || r > 9) return -1
-        val sq = r * 9 + c
+        val sc = round((x - boardLeft) / cell).toInt()
+        val sr = round((y - boardTop) / cell).toInt()
+        if (sc < 0 || sc > 8 || sr < 0 || sr > 9) return -1
+        val col = if (flipped) 8 - sc else sc
+        val row = if (flipped) 9 - sr else sr
+        val sq = row * 9 + col
         if (sq != pressSq && !targets.contains(sq)) return -1
-        val dx = x - cx(c)
-        val dy = y - cy(r)
+        val dx = x - bx(sc)
+        val dy = y - (boardTop + sr * cell)
         val limit = cell * 0.62f
         return if (dx * dx + dy * dy <= limit * limit) sq else -1
     }
@@ -511,6 +655,12 @@ class GameView(context: Context) : View(context) {
 
     fun handleBack(): Boolean {
         return when {
+            setupVisible -> {
+                // 设置卡片开着时，返回键先关卡片
+                setupVisible = false
+                invalidate()
+                true
+            }
             screen == Screen.GAME -> {
                 if (game.reviewing) {
                     // 复盘时返回键先回到结算卡片，不直接丢下这局
@@ -552,6 +702,7 @@ class GameView(context: Context) : View(context) {
         hintName = ""
         logVisible = false
         confirmExit = false
+        setupVisible = false
         notice = ""
         screen = Screen.MENU
         selected = -1
@@ -566,7 +717,8 @@ class GameView(context: Context) : View(context) {
         generation++
         mode = m
         if (m == Mode.PVP) clearPvpSave()
-        game.reset()
+        // 开局按设置摆子：让子只在这里生效，之后悔棋 / 复盘都从同一个开局重放
+        game.reset(removedFor(m))
         selected = -1
         targets = IntArray(0)
         dragging = false
@@ -584,6 +736,13 @@ class GameView(context: Context) : View(context) {
         screen = Screen.GAME
         // 双人 / 人机的棋盘布局不同（居中 vs 给棋谱留位置），换模式要重算几何
         updateGeometry()
+        if (m == Mode.AI) {
+            if (game.removedPieces.isNotEmpty()) {
+                showNotice("我执${sideLabel(humanSide)} · 让 ${game.removedPieces.size} 子", 2400L)
+            }
+            // 执黑时电脑（红）先走
+            if (game.sideToMove == aiSide) startThinking()
+        }
         invalidate()
     }
 
@@ -605,7 +764,7 @@ class GameView(context: Context) : View(context) {
             finishedAt = SystemClock.uptimeMillis()
             // 等动画走完再弹出结算
             postDelayed({ invalidate() }, 420L)
-        } else if (mode == Mode.AI && game.sideToMove == Side.BLACK) {
+        } else if (mode == Mode.AI && game.sideToMove == aiSide) {
             startThinking()
         }
         invalidate()
@@ -620,14 +779,16 @@ class GameView(context: Context) : View(context) {
 
     private fun undo() {
         if (thinking) return
+        if (mode == Mode.AI && !canUndoNow()) return
         generation++
         thinking = false
         hintThinking = false
         hintMove = -1
         hintName = ""
-        // 人机模式下退回到自己该走棋的局面
-        val steps = if (mode == Mode.AI && game.plyCount >= 2) 2 else 1
-        repeat(steps) {
+        if (mode == Mode.AI) {
+            // 人机模式下退回到自己该走棋的局面：自己的上一步 + 电脑的应手
+            repeat(2) { if (game.canUndo()) game.undo() }
+        } else {
             if (game.canUndo()) game.undo()
         }
         if (mode == Mode.PVP) savePvpGame()
@@ -635,6 +796,8 @@ class GameView(context: Context) : View(context) {
         targets = IntArray(0)
         animating = false
         finishedAt = 0L
+        // 执黑时退到开局，轮到电脑重新走第一步
+        if (mode == Mode.AI && game.sideToMove == aiSide) startThinking()
         haptic(HapticFeedbackConstants.KEYBOARD_TAP)
         invalidate()
     }
@@ -690,6 +853,7 @@ class GameView(context: Context) : View(context) {
         prefs.edit()
             .putString(SAVE_KEY, SAVE_PREFIX + body)
             .putInt(SAVE_PLY_KEY, game.plyCount)
+            .putString(SAVE_REMOVED_KEY, formatSquares(game.removedPieces))
             .commit()
         hasPvpSave = true
         pvpSavePly = game.plyCount
@@ -697,7 +861,11 @@ class GameView(context: Context) : View(context) {
 
     private fun clearPvpSave() {
         if (!hasPvpSave && !prefs.contains(SAVE_KEY)) return
-        prefs.edit().remove(SAVE_KEY).remove(SAVE_PLY_KEY).commit()
+        prefs.edit()
+            .remove(SAVE_KEY)
+            .remove(SAVE_PLY_KEY)
+            .remove(SAVE_REMOVED_KEY)
+            .commit()
         hasPvpSave = false
         pvpSavePly = 0
     }
@@ -716,13 +884,18 @@ class GameView(context: Context) : View(context) {
             clearPvpSave()
             return false
         }
-        if (moves.isEmpty() || !game.restoreMoves(moves) || game.finished) {
+        // 让子是开局的一部分：存档里单独记着，重放时和开局摆子一致
+        val removed = parseSquares(prefs.getString(SAVE_REMOVED_KEY, null))
+        if (moves.isEmpty() || !game.restoreMoves(moves, removed) || game.finished) {
             clearPvpSave()
             return false
         }
 
         generation++
         mode = Mode.PVP
+        // 存档里带着让子，重开这一局时保持同一套设置
+        pvpRemoved = removed
+        prefs.edit().putString(KEY_PVP_REMOVED, formatSquares(removed)).apply()
         selected = -1
         targets = IntArray(0)
         dragging = false
@@ -760,7 +933,7 @@ class GameView(context: Context) : View(context) {
     /** 人机模式：让引擎给出当前局面的推荐着法，只标在棋盘上，不替玩家落子。再点一次收起。 */
     private fun startHint() {
         if (mode != Mode.AI || thinking || hintThinking || game.finished) return
-        if (game.sideToMove != Side.RED) return
+        if (game.sideToMove != humanSide) return
         if (hintMove >= 0) {
             hintMove = -1
             hintName = ""
@@ -780,7 +953,9 @@ class GameView(context: Context) : View(context) {
             post {
                 if (gen != generation) return@post
                 hintThinking = false
-                if (move != 0 && game.plyCount == ply && !game.finished && game.sideToMove == Side.RED) {
+                if (move != 0 && game.plyCount == ply && !game.finished &&
+                    game.sideToMove == humanSide
+                ) {
                     hintMove = move
                     hintName = name
                     haptic(HapticFeedbackConstants.KEYBOARD_TAP)
@@ -792,6 +967,7 @@ class GameView(context: Context) : View(context) {
 
     private fun startThinking() {
         if (thinking) return
+        if (mode != Mode.AI || game.finished || game.sideToMove != aiSide) return
         thinking = true
         val gen = generation
         val snapshot = game.board.copy()
@@ -809,7 +985,7 @@ class GameView(context: Context) : View(context) {
             postDelayed({
                 if (gen != generation) return@postDelayed
                 thinking = false
-                if (move != 0 && !game.finished && game.sideToMove == Side.BLACK) {
+                if (move != 0 && !game.finished && game.sideToMove == aiSide) {
                     applyMove(MoveGen.fromOf(move), MoveGen.toOf(move))
                 }
                 invalidate()
@@ -920,15 +1096,11 @@ class GameView(context: Context) : View(context) {
         y += dp(62f)
 
         menuAiRect.set(left, y, left + btnW, y + btnH)
-        drawMenuButton(canvas, menuAiRect, "人机对战", "与电脑对弈", filled = true)
+        drawMenuButton(canvas, menuAiRect, "人机对战", aiMenuSubtitle(), filled = true)
         y += btnH + dp(14f)
 
         menuPvpRect.set(left, y, left + btnW, y + btnH)
-        drawMenuButton(
-            canvas, menuPvpRect, "双人对弈",
-            if (hasPvpSave) "继续上次对局 · $pvpSavePly 步" else "同屏轮流走子",
-            filled = false
-        )
+        drawMenuButton(canvas, menuPvpRect, "双人对弈", pvpMenuSubtitle(), filled = false)
         y += btnH + dp(34f)
 
         // 难度：分段控件
@@ -991,6 +1163,237 @@ class GameView(context: Context) : View(context) {
             textPaint.textAlign = Paint.Align.RIGHT
             canvas.drawText(ver, w - dp(18f), h - bottomInset - dp(10f), textPaint)
             textPaint.textAlign = Paint.Align.CENTER
+        }
+
+        // 开局设置卡片盖在菜单上（只在新开一局前出现）
+        if (setupVisible) drawSetup(canvas)
+    }
+
+    private fun aiMenuSubtitle(): String =
+        if (humanSide == Side.RED && aiRemoved.isEmpty()) {
+            "与电脑对弈"
+        } else {
+            buildString {
+                append("我执${sideLabel(humanSide)}")
+                if (aiRemoved.isNotEmpty()) append(" · 让 ${aiRemoved.size} 子")
+            }
+        }
+
+    private fun pvpMenuSubtitle(): String = when {
+        hasPvpSave -> "继续上次对局 · $pvpSavePly 步"
+        pvpRemoved.isEmpty() -> "同屏轮流走子"
+        else -> "同屏轮流走子 · 让 ${pvpRemoved.size} 子"
+    }
+
+    // ============================================================
+    // 开局设置卡片（人机 / 双人共用）
+    // ============================================================
+
+    private fun drawSetup(canvas: Canvas) {
+        val w = width.toFloat()
+        val h = height.toFloat()
+        val ai = setupMode == Mode.AI
+
+        paint.style = Paint.Style.FILL
+        paint.alpha = 255
+        paint.color = 0xA6000000.toInt()
+        canvas.drawRect(0f, 0f, w, h, paint)
+
+        val cardW = min(w - dp(32f), dp(340f))
+        val padX = dp(18f)
+        val padTop = dp(18f)
+        val titleH = dp(30f)
+        val labelH = dp(16f)
+        val segH = dp(36f)
+        val gapAfterSeg = dp(10f)
+        val boardGap = dp(6f)
+        val btnGap = dp(16f)
+        val btnH = dp(44f)
+        val padBottom = dp(18f)
+
+        // 卡片固定部分的高度；小盘按剩下的空间定边长，小屏也不会顶出去
+        val fixed = padTop + titleH +
+            (if (ai) labelH + segH + gapAfterSeg else 0f) +
+            labelH + boardGap + btnGap + btnH + padBottom
+        val availH = h - topInset - bottomInset - dp(24f)
+        val miniCell = min(
+            (cardW - padX * 2) / 9f,
+            (availH - fixed) / 10f
+        ).coerceIn(dp(13f), dp(30f))
+
+        val cardH = fixed + miniCell * 10f
+        val left = (w - cardW) / 2f
+        val top = (h - cardH) / 2f
+        setupCardRect.set(left, top, left + cardW, top + cardH)
+
+        paint.color = 0xF22B1F15.toInt()
+        canvas.drawRoundRect(setupCardRect, dp(24f), dp(24f), paint)
+        linePaint.color = 0x66E2BE79
+        linePaint.strokeWidth = dp(1.2f)
+        canvas.drawRoundRect(setupCardRect, dp(24f), dp(24f), linePaint)
+
+        titlePaint.textAlign = Paint.Align.CENTER
+        titlePaint.textSize = dp(24f)
+        titlePaint.color = C_GOLD
+        titlePaint.letterSpacing = 0.08f
+        canvas.drawText(
+            if (ai) "人机对战" else "双人对弈",
+            w / 2f, top + padTop + dp(21f), titlePaint
+        )
+        titlePaint.letterSpacing = 0f
+
+        var y = top + padTop + titleH
+        if (ai) {
+            drawSetupLabel(canvas, "我执", left + padX, y + labelH * 0.74f)
+            y += labelH
+
+            val segLeft = left + padX
+            val segW = cardW - padX * 2
+            paint.color = 0x12FFFFFF
+            tmpRect.set(segLeft, y, segLeft + segW, y + segH)
+            canvas.drawRoundRect(tmpRect, segH / 2f, segH / 2f, paint)
+            linePaint.color = 0x22E2BE79
+            linePaint.strokeWidth = dp(1f)
+            canvas.drawRoundRect(tmpRect, segH / 2f, segH / 2f, linePaint)
+
+            val pad = dp(3.5f)
+            val itemW = (segW - pad * 2) / 2f
+            val itemH = segH - pad * 2
+            setupRedRect.set(segLeft + pad, y + pad, segLeft + pad + itemW, y + pad + itemH)
+            setupBlackRect.set(
+                segLeft + pad + itemW, y + pad,
+                segLeft + pad + itemW * 2f, y + pad + itemH
+            )
+            drawSetupSegment(canvas, setupRedRect, "红方 · 先行", humanSide == Side.RED, itemH)
+            drawSetupSegment(canvas, setupBlackRect, "黑方 · 后行", humanSide == Side.BLACK, itemH)
+            y += segH + gapAfterSeg
+        } else {
+            setupRedRect.setEmpty()
+            setupBlackRect.setEmpty()
+        }
+
+        val removed = removedFor(setupMode)
+        drawSetupLabel(
+            canvas,
+            if (removed.isEmpty()) "让子（点棋子拿掉，再点放回）" else "让子 · 已让 ${removed.size} 子",
+            left + padX, y + labelH * 0.74f
+        )
+        setupClearRect.setEmpty()
+        if (removed.isNotEmpty()) {
+            textPaint.textAlign = Paint.Align.RIGHT
+            textPaint.typeface = SANS_MEDIUM
+            textPaint.textSize = dp(11f)
+            textPaint.color = C_GOLD
+            canvas.drawText("清空", left + cardW - padX, y + labelH * 0.74f, textPaint)
+            val tw = textPaint.measureText("清空")
+            setupClearRect.set(
+                left + cardW - padX - tw - dp(8f), y,
+                left + cardW - padX, y + labelH
+            )
+            textPaint.typeface = SANS
+        }
+        y += labelH + boardGap
+
+        setupCell = miniCell
+        setupLeft = w / 2f - miniCell * 4f
+        setupTop = y + miniCell * 0.5f
+        drawSetupBoard(canvas)
+        y += miniCell * 10f + btnGap
+
+        val gap = dp(10f)
+        val btnW = (cardW - padX * 2 - gap) / 2f
+        setupCancelRect.set(left + padX, y, left + padX + btnW, y + btnH)
+        setupStartRect.set(
+            setupCancelRect.right + gap, y,
+            setupCancelRect.right + gap + btnW, y + btnH
+        )
+        drawDialogButton(canvas, setupCancelRect, "取消", false, btnH)
+        drawDialogButton(canvas, setupStartRect, "开始对局", true, btnH)
+    }
+
+    private fun drawSetupLabel(canvas: Canvas, label: String, x: Float, baseline: Float) {
+        textPaint.textAlign = Paint.Align.LEFT
+        textPaint.typeface = SANS
+        textPaint.textSize = dp(11f)
+        textPaint.letterSpacing = 0.1f
+        textPaint.color = C_TEXT_DIM
+        canvas.drawText(label, x, baseline, textPaint)
+        textPaint.letterSpacing = 0f
+    }
+
+    private fun drawSetupSegment(
+        canvas: Canvas,
+        r: RectF,
+        label: String,
+        selected: Boolean,
+        itemH: Float
+    ) {
+        paint.style = Paint.Style.FILL
+        paint.alpha = 255
+        if (selected) {
+            paint.color = C_GOLD
+            canvas.drawRoundRect(r, itemH / 2f, itemH / 2f, paint)
+        }
+        textPaint.textAlign = Paint.Align.CENTER
+        textPaint.typeface = SANS_MEDIUM
+        textPaint.textSize = dp(12f)
+        textPaint.color = if (selected) 0xFF2A1E14.toInt() else C_TEXT_DIM
+        val fm = textPaint.fontMetrics
+        canvas.drawText(label, r.centerX(), r.centerY() - (fm.ascent + fm.descent) / 2f, textPaint)
+        textPaint.typeface = SANS
+    }
+
+    /** 让子小盘：开局摆好的棋子，被拿掉的画淡 + 红线划掉，将帅不可点 */
+    private fun drawSetupBoard(canvas: Canvas) {
+        val cell = setupCell
+        val left = setupLeft
+        val top = setupTop
+        if (cell <= 0f) return
+
+        paint.style = Paint.Style.FILL
+        paint.alpha = 255
+        paint.color = 0x14FFFFFF
+        tmpRect.set(
+            left - cell * 0.5f, top - cell * 0.5f,
+            left + cell * 8.5f, top + cell * 9.5f
+        )
+        canvas.drawRoundRect(tmpRect, dp(8f), dp(8f), paint)
+
+        linePaint.color = 0x2EE2BE79
+        linePaint.strokeWidth = dp(0.7f)
+        for (r in 0..9) {
+            val yy = top + r * cell
+            canvas.drawLine(left, yy, left + cell * 8f, yy, linePaint)
+        }
+        for (c in 0..8) {
+            val xx = left + c * cell
+            canvas.drawLine(xx, top, xx, top + cell * 4f, linePaint)
+            canvas.drawLine(xx, top + cell * 5f, xx, top + cell * 9f, linePaint)
+        }
+        canvas.drawLine(left + cell * 3f, top, left + cell * 5f, top + cell * 2f, linePaint)
+        canvas.drawLine(left + cell * 5f, top, left + cell * 3f, top + cell * 2f, linePaint)
+        canvas.drawLine(left + cell * 3f, top + cell * 7f, left + cell * 5f, top + cell * 9f, linePaint)
+        canvas.drawLine(left + cell * 5f, top + cell * 7f, left + cell * 3f, top + cell * 9f, linePaint)
+
+        val removed = removedFor(setupMode)
+        val size = cell * 0.86f
+        for (sq in 0 until BOARD_SIZE) {
+            val p = setupBoard.cells[sq]
+            if (p == 0) continue
+            val x = left + colOf(sq) * cell
+            val yy = top + rowOf(sq) * cell
+            val gone = removed.contains(sq)
+            // 淡到能看出是哪枚子，又不至于像还在棋盘上
+            paint.alpha = if (gone) 78 else 255
+            drawPieceAt(canvas, p, x, yy, size, rotateBlack = false)
+            paint.alpha = 255
+            if (gone) {
+                linePaint.color = 0xCCD9503F.toInt()
+                linePaint.strokeWidth = dp(1.5f)
+                val rr = size * 0.30f
+                canvas.drawLine(x - rr, yy - rr, x + rr, yy + rr, linePaint)
+                canvas.drawLine(x + rr, yy - rr, x - rr, yy + rr, linePaint)
+            }
         }
     }
 
@@ -1102,7 +1505,7 @@ class GameView(context: Context) : View(context) {
             restartRect.left - dp(8f) - dp(56f), barTop,
             restartRect.left - dp(8f), barTop + barH
         )
-        drawPill(canvas, undoRect, "悔棋", game.canUndo() && !thinking && !confirmExit)
+        drawPill(canvas, undoRect, "悔棋", canUndoNow())
 
         val title = when (mode) {
             Mode.AI -> "人机对战 · ${difficulty.label}"
@@ -1127,9 +1530,9 @@ class GameView(context: Context) : View(context) {
                 backRect.right + dp(8f), barTop,
                 backRect.right + dp(8f) + dp(56f), barTop + barH
             )
-            // 电脑思考、计算提示、棋局结束、轮黑走时都不能点
+            // 电脑思考、计算提示、棋局结束、轮到电脑走时都不能点
             val hintEnabled = !thinking && !hintThinking && !game.finished &&
-                game.sideToMove == Side.RED && !confirmExit
+                game.sideToMove == humanSide && !confirmExit
             drawPill(canvas, hintRect, "提示", hintEnabled)
             titleLeft = hintRect.right
         }
@@ -1236,7 +1639,7 @@ class GameView(context: Context) : View(context) {
         textPaint.typeface = kai
         textPaint.textSize = cell * 0.40f
         textPaint.letterSpacing = 0f
-        val riverY = cy(4) + cell / 2f
+        val riverY = boardTop + cell * 4.5f
         val fm = textPaint.fontMetrics
         val charDx = cell * 0.28f
         fun riverChar(ch: String, x: Float, y: Float, degrees: Float) {
@@ -1245,24 +1648,27 @@ class GameView(context: Context) : View(context) {
             canvas.drawText(ch, x, y - (fm.ascent + fm.descent) / 2f, textPaint)
             canvas.restore()
         }
-        riverChar("楚", cx(2) - charDx, riverY, -90f)
-        riverChar("河", cx(2) + charDx, riverY, -90f)
+        // 楚河汉界是棋盘装饰，固定在屏幕左右，不跟着翻转（执黑）跑
+        riverChar("楚", bx(2) - charDx, riverY, -90f)
+        riverChar("河", bx(2) + charDx, riverY, -90f)
         // 右边这组是「漢界」：漢在右端、界在左端（之前写反了，按实机截图对比改回来）
-        riverChar("界", cx(6) - charDx, riverY, 90f)
-        riverChar("漢", cx(6) + charDx, riverY, 90f)
+        riverChar("界", bx(6) - charDx, riverY, 90f)
+        riverChar("漢", bx(6) + charDx, riverY, 90f)
         textPaint.typeface = SANS
     }
 
     private fun mark(canvas: Canvas, r: Int, c: Int) {
-        val x = cx(c)
+        // 装饰跟随棋盘翻转：屏幕上的列才是判断「是否靠边」的依据
+        val sc = if (flipped) 8 - c else c
+        val x = bx(sc)
         val y = cy(r)
         val d = cell * 0.10f
         val len = cell * 0.16f
         linePaint.strokeWidth = dp(0.9f)
         linePaint.color = 0xAA8A5F35.toInt()
         for (sx in intArrayOf(-1, 1)) {
-            if (sx < 0 && c == 0) continue
-            if (sx > 0 && c == 8) continue
+            if (sx < 0 && sc == 0) continue
+            if (sx > 0 && sc == 8) continue
             for (sy in intArrayOf(-1, 1)) {
                 val px = x + sx * d
                 val py = y + sy * d
@@ -1455,12 +1861,19 @@ class GameView(context: Context) : View(context) {
         canvas.drawPath(hintPath, paint)
     }
 
-    private fun drawPieceAt(canvas: Canvas, piece: Int, x: Float, y: Float, size: Float) {
+    private fun drawPieceAt(
+        canvas: Canvas,
+        piece: Int,
+        x: Float,
+        y: Float,
+        size: Float,
+        rotateBlack: Boolean = mode == Mode.PVP
+    ) {
         val bmp = pieceBitmaps[piece] ?: return
         val h = size / 2f
         tmpRect2.set(x - h, y - h, x + h, y + h)
         // 双人对弈时两人对坐，黑方棋子转 180°，让对面的人正着看
-        if (mode == Mode.PVP && sideOf(piece) == Side.BLACK) {
+        if (rotateBlack && sideOf(piece) == Side.BLACK) {
             canvas.save()
             canvas.rotate(180f, x, y)
             canvas.drawBitmap(bmp, null, tmpRect2, paint)
@@ -1477,8 +1890,16 @@ class GameView(context: Context) : View(context) {
     private fun drawCapturedRows(canvas: Canvas) {
         val above = boardTop - cell * 0.62f - cell * 0.31f
         val below = boardTop + cell * 9f + cell * 0.62f + cell * 0.31f
-        drawCapturedRow(canvas, game.capturedPieces(Side.BLACK), above, mode == Mode.PVP, "黑方吃子")
-        drawCapturedRow(canvas, game.capturedPieces(Side.RED), below, false, "红方吃子")
+        // 上排永远是坐在上方那一方的战绩：执黑翻转后上方变成红方
+        val topSide = if (flipped) Side.RED else Side.BLACK
+        drawCapturedRow(
+            canvas, game.capturedPieces(topSide), above,
+            mode == Mode.PVP, "${Side.name(topSide)}吃子"
+        )
+        drawCapturedRow(
+            canvas, game.capturedPieces(Side.other(topSide)), below,
+            false, "${Side.name(Side.other(topSide))}吃子"
+        )
     }
 
     private fun drawCapturedRow(
@@ -1591,7 +2012,13 @@ class GameView(context: Context) : View(context) {
         textPaint.textAlign = Paint.Align.RIGHT
         textPaint.textSize = dp(11f)
         textPaint.color = 0x66B7A489
-        canvas.drawText("共 ${game.moveCount} 步", right - dp(14f), headerBaseline, textPaint)
+        val removedCount = game.removedPieces.size
+        val countText = if (removedCount > 0) {
+            "让${removedCount}子 · 共 ${game.moveCount} 步"
+        } else {
+            "共 ${game.moveCount} 步"
+        }
+        canvas.drawText(countText, right - dp(14f), headerBaseline, textPaint)
 
         if (footer != null) {
             textPaint.textAlign = Paint.Align.CENTER
@@ -1898,5 +2325,11 @@ class GameView(context: Context) : View(context) {
         const val SAVE_KEY = "pvp_save"
         const val SAVE_PLY_KEY = "pvp_save_ply"
         const val SAVE_PREFIX = "v1:"
+        /** 存档里的让子（开局被拿掉的格子） */
+        const val SAVE_REMOVED_KEY = "pvp_save_removed"
+        /** 开局设置：我执哪一方、人机 / 双人各自的让子 */
+        const val KEY_AI_SIDE = "ai_side"
+        const val KEY_AI_REMOVED = "ai_removed"
+        const val KEY_PVP_REMOVED = "pvp_removed"
     }
 }

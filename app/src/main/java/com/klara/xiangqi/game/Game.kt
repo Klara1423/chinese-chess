@@ -47,14 +47,21 @@ class Game {
 
     private var quietPlies: Int = 0
 
+    /** 本局开局被拿掉的格子（让子）。复盘重建、读档重放都要从同一个开局摆起 */
+    private var initialRemoved: IntArray = IntArray(0)
+
     init {
         hashes.add(board.hash)
     }
 
     val sideToMove: Int get() = board.sideToMove
 
-    fun reset() {
-        board.reset()
+    /** 本局让子（被拿掉的格子），界面用来显示「让 N 子」 */
+    val removedPieces: IntArray get() = initialRemoved
+
+    fun reset(removed: IntArray = IntArray(0)) {
+        initialRemoved = removed.copyOf()
+        board.reset(initialRemoved)
         history.clear()
         hashes.clear()
         notations.clear()
@@ -150,8 +157,8 @@ class Game {
     }
 
     /** 从存档恢复：重放整局，重建棋盘、棋谱、吃子记录和胜负状态 */
-    fun restoreMoves(moves: IntArray): Boolean {
-        reset()
+    fun restoreMoves(moves: IntArray, removed: IntArray = IntArray(0)): Boolean {
+        reset(removed)
         for (m in moves) {
             if (!play(MoveGen.fromOf(m), MoveGen.toOf(m))) {
                 reset()
@@ -198,7 +205,7 @@ class Game {
      * 不动历史 / 棋谱 / 胜负结果，所以前后翻页不会丢着法。
      */
     private fun rebuildTo(ply: Int) {
-        board.reset()
+        board.reset(initialRemoved)
         for (i in 0 until ply) board.make(history[i].move)
         lastMove = if (ply == 0) -1 else history[ply - 1].move
         lastMovedPiece = if (ply == 0) 0 else history[ply - 1].piece

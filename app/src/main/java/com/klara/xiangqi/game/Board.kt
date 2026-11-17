@@ -15,7 +15,11 @@ class Board {
         reset()
     }
 
-    fun reset() {
+    /**
+     * 摆回开局。`removed` 是要拿掉的格子（让子），只在开局摆好后挖空，
+     * 将 / 帅不会被拿掉（调用方负责过滤，这里再兜一层）。
+     */
+    fun reset(removed: IntArray = IntArray(0)) {
         cells.fill(0)
         val back = intArrayOf(
             Kind.ROOK, Kind.HORSE, Kind.ELEPHANT, Kind.ADVISOR, Kind.KING,
@@ -32,6 +36,12 @@ class Board {
         for (c in intArrayOf(0, 2, 4, 6, 8)) {
             cells[squareOf(3, c)] = pieceOf(Side.BLACK, Kind.PAWN)
             cells[squareOf(6, c)] = pieceOf(Side.RED, Kind.PAWN)
+        }
+        // 让子：棋子摆好后再挖空，将 / 帅绝不能被拿掉
+        for (sq in removed) {
+            if (sq !in 0 until BOARD_SIZE) continue
+            if (kindOf(cells[sq]) == Kind.KING) continue
+            cells[sq] = 0
         }
         sideToMove = Side.RED
         redKingSq = squareOf(9, 4)
