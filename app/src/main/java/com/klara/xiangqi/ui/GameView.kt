@@ -192,9 +192,6 @@ class GameView(context: Context) : View(context) {
 
     init {
         difficulty = Difficulty.fromName(prefs.getString("difficulty", null))
-        humanSide = if (prefs.getString(KEY_AI_SIDE, null) == "BLACK") Side.BLACK else Side.RED
-        aiRemoved = parseSquares(prefs.getString(KEY_AI_REMOVED, null))
-        pvpRemoved = parseSquares(prefs.getString(KEY_PVP_REMOVED, null))
         hasPvpSave = !prefs.getString(SAVE_KEY, null).isNullOrEmpty()
         pvpSavePly = prefs.getInt(SAVE_PLY_KEY, 0)
         setLayerType(LAYER_TYPE_HARDWARE, null)
@@ -545,7 +542,10 @@ class GameView(context: Context) : View(context) {
 
     /** 只有在新开一局之前才有这个卡片：对局中、复盘时都进不来 */
     private fun openSetup(m: Mode) {
+        // 每次开局都从默认开始：执红、不让子。上一局的选项不沿用
         setupMode = m
+        humanSide = Side.RED
+        if (m == Mode.AI) aiRemoved = IntArray(0) else pvpRemoved = IntArray(0)
         setupVisible = true
         haptic(HapticFeedbackConstants.KEYBOARD_TAP)
         invalidate()
@@ -586,7 +586,6 @@ class GameView(context: Context) : View(context) {
     private fun setHumanSide(side: Int) {
         if (humanSide == side) return
         humanSide = side
-        prefs.edit().putString(KEY_AI_SIDE, if (side == Side.BLACK) "BLACK" else "RED").apply()
         haptic(HapticFeedbackConstants.KEYBOARD_TAP)
         invalidate()
     }
@@ -608,13 +607,7 @@ class GameView(context: Context) : View(context) {
     }
 
     private fun setRemoved(m: Mode, squares: IntArray) {
-        if (m == Mode.AI) {
-            aiRemoved = squares
-            prefs.edit().putString(KEY_AI_REMOVED, formatSquares(squares)).apply()
-        } else {
-            pvpRemoved = squares
-            prefs.edit().putString(KEY_PVP_REMOVED, formatSquares(squares)).apply()
-        }
+        if (m == Mode.AI) aiRemoved = squares else pvpRemoved = squares
         haptic(HapticFeedbackConstants.KEYBOARD_TAP)
         invalidate()
     }
@@ -893,9 +886,8 @@ class GameView(context: Context) : View(context) {
 
         generation++
         mode = Mode.PVP
-        // 存档里带着让子，重开这一局时保持同一套设置
+        // 存档里带着让子，重开这一局时保持同一套摆子（只是本局内存，下次开局仍从默认开始）
         pvpRemoved = removed
-        prefs.edit().putString(KEY_PVP_REMOVED, formatSquares(removed)).apply()
         selected = -1
         targets = IntArray(0)
         dragging = false
@@ -1096,7 +1088,7 @@ class GameView(context: Context) : View(context) {
         y += dp(62f)
 
         menuAiRect.set(left, y, left + btnW, y + btnH)
-        drawMenuButton(canvas, menuAiRect, "人机对战", aiMenuSubtitle(), filled = true)
+        drawMenuButton(canvas, menuAiRect, "人机对战", "与电脑对弈", filled = true)
         y += btnH + dp(14f)
 
         menuPvpRect.set(left, y, left + btnW, y + btnH)
@@ -1169,21 +1161,9 @@ class GameView(context: Context) : View(context) {
         if (setupVisible) drawSetup(canvas)
     }
 
-    private fun aiMenuSubtitle(): String =
-        if (humanSide == Side.RED && aiRemoved.isEmpty()) {
-            "与电脑对弈"
-        } else {
-            buildString {
-                append("我执${sideLabel(humanSide)}")
-                if (aiRemoved.isNotEmpty()) append(" · 让 ${aiRemoved.size} 子")
-            }
-        }
-
-    private fun pvpMenuSubtitle(): String = when {
-        hasPvpSave -> "继续上次对局 · $pvpSavePly 步"
-        pvpRemoved.isEmpty() -> "同屏轮流走子"
-        else -> "同屏轮流走子 · 让 ${pvpRemoved.size} 子"
-    }
+    /** 双人按钮的副标题：有存档就提示续局。开局设置不记住，所以这里不再显示上一局的选项 */
+    private fun pvpMenuSubtitle(): String =
+        if (hasPvpSave) "继续上次对局 · $pvpSavePly 步" else "同屏轮流走子"
 
     // ============================================================
     // 开局设置卡片（人机 / 双人共用）
@@ -1893,13 +1873,26 @@ class GameView(context: Context) : View(context) {
         // 上排永远是坐在上方那一方的战绩：执黑翻转后上方变成红方
         val topSide = if (flipped) Side.RED else Side.BLACK
         drawCapturedRow(
-            canvas, game.capturedPieces(topSide), above,
+            canvas, lostPieces(topSide), above,
             mode == Mode.PVP, "${Side.name(topSide)}吃子"
         )
         drawCapturedRow(
-            canvas, game.capturedPieces(Side.other(topSide)), below,
+            canvas, lostPieces(Side.other(topSide)), below,
             false, "${Side.name(Side.other(topSide))}吃子"
         )
+    }
+
+    /** 自己那一侧的吃子行：开局的让子排在最前，后面接着吃掉的子 */
+    private fun lostPieces(side: Int): IntArray {
+        val captured = game.capturedPieces(side)
+        val removed = game.removedPieceCodes
+        if (removed.isEmpty()) return captured
+        val own = removed.filter { sideOf(it) == side }
+        if (own.isEmpty()) return captured
+        val out = IntArray(own.size + captured.size)
+        own.forEachIndexed { i, p -> out[i] = p }
+        captured.copyInto(out, own.size)
+        return out
     }
 
     private fun drawCapturedRow(
@@ -1922,11 +1915,16 @@ class GameView(context: Context) : View(context) {
         val fm = textPaint.fontMetrics
         canvas.drawText(label, dp(18f), y - (fm.ascent + fm.descent) / 2f, textPaint)
 
-        // 最多 15 个（将不会被吃），一排放得下
-        val size = cell * 0.52f
-        val gap = cell * 0.56f
         val regionLeft = dp(18f) + textPaint.measureText(label) + dp(10f)
         val regionRight = w - dp(18f)
+        // 让子 + 吃子可能很多（单方最多 15 枚），放不下时整排一起缩小，不越界
+        val maxGap = cell * 0.56f
+        val gap = if (pieces.size > 1) {
+            min(maxGap, (regionRight - regionLeft) / (pieces.size - 1))
+        } else {
+            maxGap
+        }
+        val size = min(cell * 0.52f, gap * 0.92f)
         var x = (regionLeft + regionRight) / 2f - gap * (pieces.size - 1) / 2f
 
         paint.alpha = 255
@@ -2327,9 +2325,5 @@ class GameView(context: Context) : View(context) {
         const val SAVE_PREFIX = "v1:"
         /** 存档里的让子（开局被拿掉的格子） */
         const val SAVE_REMOVED_KEY = "pvp_save_removed"
-        /** 开局设置：我执哪一方、人机 / 双人各自的让子 */
-        const val KEY_AI_SIDE = "ai_side"
-        const val KEY_AI_REMOVED = "ai_removed"
-        const val KEY_PVP_REMOVED = "pvp_removed"
     }
 }

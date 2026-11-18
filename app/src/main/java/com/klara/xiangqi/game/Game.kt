@@ -50,6 +50,9 @@ class Game {
     /** 本局开局被拿掉的格子（让子）。复盘重建、读档重放都要从同一个开局摆起 */
     private var initialRemoved: IntArray = IntArray(0)
 
+    /** 让掉的那几枚子本身（棋子编码），吃子行要按「自己那一侧」画出来 */
+    private var initialRemovedCodes: IntArray = IntArray(0)
+
     init {
         hashes.add(board.hash)
     }
@@ -59,8 +62,24 @@ class Game {
     /** 本局让子（被拿掉的格子），界面用来显示「让 N 子」 */
     val removedPieces: IntArray get() = initialRemoved
 
+    /** 本局让掉的棋子（编码），让子会显示在各方自己的吃子行里 */
+    val removedPieceCodes: IntArray get() = initialRemovedCodes
+
     fun reset(removed: IntArray = IntArray(0)) {
         initialRemoved = removed.copyOf()
+        if (initialRemoved.isEmpty()) {
+            initialRemovedCodes = IntArray(0)
+        } else {
+            // 标准开局上这些格子原本摆的是什么子
+            val full = Board()
+            val buf = IntArray(initialRemoved.size)
+            var n = 0
+            for (sq in initialRemoved) {
+                val p = if (sq in 0 until BOARD_SIZE) full.cells[sq] else 0
+                if (p != 0) buf[n++] = p
+            }
+            initialRemovedCodes = buf.copyOf(n)
+        }
         board.reset(initialRemoved)
         history.clear()
         hashes.clear()
